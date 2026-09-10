@@ -325,9 +325,7 @@ namespace OmenSuperHub {
         UpdateTrayIconText();
       }
 
-      // 当鼠标不悬停在托盘图标上时才通知
-      if (GetTrayIconRect().IsEmpty || !GetTrayIconRect().Contains(Control.MousePosition))
-        ShowOmenKeyPresetNotification();
+      ShowOmenKeyPresetNotification();
     }
 
     static void ShowOmenKeyPresetNotification() {
