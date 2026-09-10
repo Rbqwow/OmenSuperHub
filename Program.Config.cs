@@ -668,8 +668,8 @@ namespace OmenSuperHub {
     }
 
     static bool IsMonitorMetricConfig(string configName) {
-      return configName == "ShowCPUTemp" || configName == "ShowCPUPower" || configName == "ShowCPUFrequency" ||
-             configName == "ShowGPUTemp" || configName == "ShowGPUPower" || configName == "ShowGPUFrequency";
+      return configName == "ShowCPUTemp" || configName == "ShowCPUPower" ||
+             configName == "ShowGPUTemp" || configName == "ShowGPUPower";
     }
 
     static void SaveConfig(string configName = null) {
@@ -719,10 +719,8 @@ namespace OmenSuperHub {
               if (IsBuiltInPreset(currentPreset)) {
                 key.SetValue("ShowCPUTemp", showCPUTemp);
                 key.SetValue("ShowCPUPower", showCPUPower);
-                key.SetValue("ShowCPUFrequency", showCPUFrequency);
                 key.SetValue("ShowGPUTemp", showGPUTemp);
                 key.SetValue("ShowGPUPower", showGPUPower);
-                key.SetValue("ShowGPUFrequency", showGPUFrequency);
               }
               key.SetValue("FloatingBarLoc", floatingBarLoc);
               key.SetValue("FloatingBar", floatingBar);
@@ -830,17 +828,11 @@ namespace OmenSuperHub {
                 case "ShowCPUPower":
                   key.SetValue("ShowCPUPower", showCPUPower);
                   break;
-                case "ShowCPUFrequency":
-                  key.SetValue("ShowCPUFrequency", showCPUFrequency);
-                  break;
                 case "ShowGPUTemp":
                   key.SetValue("ShowGPUTemp", showGPUTemp);
                   break;
                 case "ShowGPUPower":
                   key.SetValue("ShowGPUPower", showGPUPower);
-                  break;
-                case "ShowGPUFrequency":
-                  key.SetValue("ShowGPUFrequency", showGPUFrequency);
                   break;
                 case "FloatingBarSize":
                   key.SetValue("FloatingBarSize", textSize);
@@ -948,40 +940,32 @@ namespace OmenSuperHub {
     static void LoadMonitorMetricSettings(string presetKey) {
       bool globalShowCPUTemp = true;
       bool globalShowCPUPower = true;
-      bool globalShowCPUFrequency = false;
       bool globalShowGPUTemp = true;
       bool globalShowGPUPower = true;
-      bool globalShowGPUFrequency = false;
 
       try {
         using (RegistryKey globalKey = Registry.CurrentUser.OpenSubKey(@"Software\OmenSuperHub")) {
           if (globalKey != null) {
             globalShowCPUTemp = Convert.ToBoolean(globalKey.GetValue("ShowCPUTemp", true));
             globalShowCPUPower = Convert.ToBoolean(globalKey.GetValue("ShowCPUPower", true));
-            globalShowCPUFrequency = Convert.ToBoolean(globalKey.GetValue("ShowCPUFrequency", false));
             globalShowGPUTemp = Convert.ToBoolean(globalKey.GetValue("ShowGPUTemp", true));
             globalShowGPUPower = Convert.ToBoolean(globalKey.GetValue("ShowGPUPower", true));
-            globalShowGPUFrequency = Convert.ToBoolean(globalKey.GetValue("ShowGPUFrequency", false));
           }
         }
 
         if (IsBuiltInPreset(presetKey)) {
           showCPUTemp = globalShowCPUTemp;
           showCPUPower = globalShowCPUPower;
-          showCPUFrequency = globalShowCPUFrequency;
           showGPUTemp = globalShowGPUTemp;
           showGPUPower = globalShowGPUPower;
-          showGPUFrequency = globalShowGPUFrequency;
           return;
         }
 
         using (RegistryKey presetKeyHandle = Registry.CurrentUser.OpenSubKey($@"Software\OmenSuperHub\{presetKey}")) {
           showCPUTemp = Convert.ToBoolean(presetKeyHandle?.GetValue("ShowCPUTemp", globalShowCPUTemp) ?? globalShowCPUTemp);
           showCPUPower = Convert.ToBoolean(presetKeyHandle?.GetValue("ShowCPUPower", globalShowCPUPower) ?? globalShowCPUPower);
-          showCPUFrequency = Convert.ToBoolean(presetKeyHandle?.GetValue("ShowCPUFrequency", globalShowCPUFrequency) ?? globalShowCPUFrequency);
           showGPUTemp = Convert.ToBoolean(presetKeyHandle?.GetValue("ShowGPUTemp", globalShowGPUTemp) ?? globalShowGPUTemp);
           showGPUPower = Convert.ToBoolean(presetKeyHandle?.GetValue("ShowGPUPower", globalShowGPUPower) ?? globalShowGPUPower);
-          showGPUFrequency = Convert.ToBoolean(presetKeyHandle?.GetValue("ShowGPUFrequency", globalShowGPUFrequency) ?? globalShowGPUFrequency);
         }
       } catch (Exception ex) {
         Logger.Error($"LoadMonitorMetricSettings({presetKey}): {ex.Message}");
@@ -991,10 +975,8 @@ namespace OmenSuperHub {
     static void UpdateMonitorMetricCheckedStates() {
       SetMenuItemChecked("showCPUTempGroup", Strings.MonitorCpuTempLabel, showCPUTemp);
       SetMenuItemChecked("showCPUPowerGroup", Strings.MonitorCpuPowerLabel, showCPUPower);
-      SetMenuItemChecked("showCPUFrequencyGroup", Strings.MonitorCpuFrequencyLabel, showCPUFrequency);
       SetMenuItemChecked("showGPUTempGroup", Strings.MonitorGpuTempLabel, showGPUTemp);
       SetMenuItemChecked("showGPUPowerGroup", Strings.MonitorGpuPowerLabel, showGPUPower);
-      SetMenuItemChecked("showGPUFrequencyGroup", Strings.MonitorGpuFrequencyLabel, showGPUFrequency);
     }
 
     /// <summary>
@@ -1463,10 +1445,8 @@ namespace OmenSuperHub {
           key.SetValue("TempDisplayMode", tempDisplayMode);
           key.SetValue("ShowCPUTemp", showCPUTemp);
           key.SetValue("ShowCPUPower", showCPUPower);
-          key.SetValue("ShowCPUFrequency", showCPUFrequency);
           key.SetValue("ShowGPUTemp", showGPUTemp);
           key.SetValue("ShowGPUPower", showGPUPower);
-          key.SetValue("ShowGPUFrequency", showGPUFrequency);
         }
       } catch { }
     }
