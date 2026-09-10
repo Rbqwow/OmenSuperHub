@@ -42,7 +42,7 @@ namespace OmenSuperHub {
     }
 
     /// <summary>
-    /// 从注册表加载设备信息缓存（deviceDisplayName / cycleNumber / deviceType / supportDojo）及 alreadyRead。
+    /// 从注册表加载设备信息缓存（deviceDisplayName / cycleNumber / deviceType）及 alreadyRead。
     /// 若注册表中无对应设备信息项，则从 DeviceModel 获取后写入注册表供后续启动使用。
     /// </summary>
     static void LoadDeviceInfoFromRegistry() {
@@ -56,19 +56,16 @@ namespace OmenSuperHub {
             string cachedName = key.GetValue("DeviceDisplayName") as string;
             object cachedCycle = key.GetValue("CycleNumber");
             string cachedType = key.GetValue("DeviceType") as string;
-            object cachedDojo = key.GetValue("SupportDojo");
             string cachedSSID = key.GetValue("SystemSSID") as string;
             string cachedSku = key.GetValue("Sku") as string;
 
             if (!string.IsNullOrEmpty(cachedName)
               && cachedCycle != null
               && !string.IsNullOrEmpty(cachedType)
-              && cachedDojo != null
               && !string.IsNullOrEmpty(cachedSSID)
               && !string.IsNullOrEmpty(cachedSku)) {
               deviceDisplayName = cachedName;
               cycleNumber = (int)cachedCycle;
-              supportDojo = ((int)cachedDojo) != 0;
               systemSSID = cachedSSID;
               sku = cachedSku;
               if (Enum.TryParse<DeviceEnums.DeviceType>(cachedType, out var parsedType))
@@ -103,7 +100,6 @@ namespace OmenSuperHub {
         deviceDisplayName = DeviceModel.OmenPlatform.DisplayName;
         cycleNumber = DeviceModel.GetCycleNumber(DeviceModel.OmenPlatform.ProductNum.FirstOrDefault((SSIDInfo x) => x.SSID.Equals(DeviceModel.ThisSystemID)).Cycle);
         deviceType = DeviceModel.OmenPlatform.Name;
-        supportDojo = DeviceModel.OmenPlatform.Feature.Contains("DojoLighting");
         systemSSID = DeviceModel.ThisSystemID;
         sku = PerformanceControlHelper.GetPlatformSku(isInit: true);
         SaveDeviceInfoToRegistry();
@@ -125,7 +121,6 @@ namespace OmenSuperHub {
           key.SetValue("DeviceDisplayName", deviceDisplayName, RegistryValueKind.String);
           key.SetValue("CycleNumber", cycleNumber, RegistryValueKind.DWord);
           key.SetValue("DeviceType", deviceType.ToString(), RegistryValueKind.String);
-          key.SetValue("SupportDojo", supportDojo ? 1 : 0, RegistryValueKind.DWord);
           key.SetValue("SystemSSID", systemSSID, RegistryValueKind.String);
           key.SetValue("Sku", sku, RegistryValueKind.String);
         }

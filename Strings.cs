@@ -284,106 +284,12 @@
     public static string SetTextSizeSlider => T("拖动滑块设置字号", "拖動滑塊設置字號", "Drag the slider to set font size");
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 灯光控制 — UI 文本
-    // ─────────────────────────────────────────────────────────────────────────
-    public static string LightingWmiProtocol => T("WMI 协议", "WMI 協議", "WMI Protocol");
-    public static string LightingWmiTip => T("💡 仅当灯光控制无效时，可尝试更改此设置。",
-        "💡 僅當燈光控制無效時，可嘗試更改此設定。",
-        "💡 Try changing this if lighting control is not working.");
-    public static string LightingProtocolBasic => T("四分区", "四分割區", "Basic 4-Zone");
-    public static string LightingProtocolDojo => T("Dojo四分区", "Dojo四分割區", "Dojo 4-Zone");
-    public static string LightingBrightness => T("亮度", "亮度", "Brightness");
-    public static string LightingStaticColor => T("静态颜色", "靜態顏色", "Static Color");
-    public static string LightingAllZones => T("全局颜色", "全局顏色", "All Zones");
-    public static string LightingZone => T("分区", "分割區", "Zone");
-    public static string LightingCustom => T("自定义...", "自訂...", "Custom...");
-    public static string LightingAnimation => T("动画效果", "動畫效果", "Animation");
-    public static string LightingEffect => T("效果", "效果", "Effect");
-    public static string LightingSpeed => T("速度", "速度", "Speed");
-    public static string LightingDirection => T("方向", "方向", "Direction");
-    public static string LightingTheme => T("主题", "主題", "Theme");
-    public static string LightingColorRed => T("红色", "紅色", "Red");
-    public static string LightingColorGreen => T("绿色", "綠色", "Green");
-    public static string LightingColorBlue => T("蓝色", "藍色", "Blue");
-    public static string LightingColorWhite => T("白色", "白色", "White");
-    public static string LightingColorCyan => T("冰蓝", "冰藍", "Cyan");
-    public static string LightingColorMagenta => T("粉色", "粉色", "Pink");
-    public static string LightingColorYellow => T("黄色", "黃色", "Yellow");
-    // 动画效果名称
-    public static string LightingAnimColorCycle => T("色彩循环", "色彩循環", "Color Cycle");
-    public static string LightingAnimStarlight => T("星光", "星光", "Starlight");
-    public static string LightingAnimBreathing => T("呼吸", "呼吸", "Breathing");
-    public static string LightingAnimWave => T("波浪", "波浪", "Wave");
-    public static string LightingAnimRaindrop => T("雨滴", "雨滴", "Raindrop");
-    public static string LightingAnimAudioPulse => T("音频脉冲", "音頻脈衝", "Audio Pulse");
-    public static string LightingAnimConfetti => T("五彩纸屑", "五彩紙屑", "Confetti");
-    public static string LightingAnimSun => T("太阳", "太陽", "Sun");
-    public static string LightingAnimSwipe => T("划过", "劃過", "Swipe");
-    // Dojo 专用
-    public static string LightingDirLeft => T("左/逆时针", "左/逆時針", "Left/Counterclockwise");
-    public static string LightingDirRight => T("右/顺时针", "右/順時針", "Right/Clockwise");
-    public static string LightingThemeGalaxy => T("银河", "銀河", "Galaxy");
-    public static string LightingThemeVolcano => T("火山", "火山", "Volcano");
-    public static string LightingThemeJungle => T("丛林", "叢林", "Jungle");
-    public static string LightingThemeOcean => T("海洋", "海洋", "Ocean");
-    public static string LightingThemeCustom => T("自定义", "自訂", "Custom");
-    // 速度
-    public static string LightingSpeedSlow => T("慢", "慢", "Slow");
-    public static string LightingSpeedMedium => T("中", "中", "Medium");
-    public static string LightingSpeedFast => T("快", "快", "Fast");
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 灯光控制 — 状态显示
-    // ─────────────────────────────────────────────────────────────────────────
-    public static string LightingBrightnessStatus => T("亮度", "亮度", "Brightness");
-    public static string LightingAnimationStatus => T("动画效果", "動畫效果", "Animation");
-    public static string LightingAnimationNone => T("无", "無", "None");
-
-    public static string LightingZoneTag => T("分区", "分區", "Zone");
-
-    public static string LightingSingleZoneColor => T("颜色", "顏色", "Color");
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 灯光控制 — 开关菜单项
-    // ─────────────────────────────────────────────────────────────────────────
-    public static string LightingOn => T("开", "開", "On");
-    public static string LightingOff => T("关", "關", "Off");
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 灯光控制 — 单键 RGB
-    // ─────────────────────────────────────────────────────────────────────────
-    public static string LightingPerKeyTitle => T("单键 RGB（测试功能）", "單鍵 RGB（測試功能）", "Per-Key RGB (Experimental)");
-    public static string LightingPerKeyStaticColor => T("静态颜色", "靜態顏色", "Static Color");
-    public static string LightingPerKeyAnimation => T("动画效果", "動畫效果", "Animation");
-    public static string LightingPerKeyBrightness => T("亮度", "亮度", "Brightness");
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 灯光控制 — 四分区/灯条标题
-    // ─────────────────────────────────────────────────────────────────────────
-    public static string LightingFourZoneKeyboard => T("四分区/单分区键盘", "四分割區/單分割區鍵盤", "4-Zone/1-Zone Keyboard");
-    public static string LightingLightBar => T("灯条（测试功能）", "燈條（測試功能）", "Light Bar (Experimental)");
-    public static string LightingBrightnessRangeTip => T("💡 亮度范围可能为0~100，也可能为100关228开",
-        "💡 亮度範圍可能為0~100，也可能為100關228開",
-        "💡 Brightness range may be 0-100, or 100=off, 228=on");
-
-    // ─────────────────────────────────────────────────────────────────────────
     // 系统信息中的 NVIDIA 功率限制动态文本
     // ─────────────────────────────────────────────────────────────────────────
     public static string SysNvidiaPowerLimitText(string limitsText) => T(
         $"NVIDIA 功率限制: {limitsText}",
         $"NVIDIA 功率限制: {limitsText}",
         $"NVIDIA Power Limit: {limitsText}");
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 键盘灯光类型名称
-    // ─────────────────────────────────────────────────────────────────────────
-    public static string KbTypeNormal => T("普通", "普通", "Normal");
-    public static string KbTypeFourZoneWithNumpad => T("四分区带小键盘", "四分割區帶數字鍵", "4-Zone with Numpad");
-    public static string KbTypeFourZoneWithoutNumpad => T("四分区无小键盘", "四分割區無數字鍵", "4-Zone without Numpad");
-    public static string KbTypeRgbPerKey => T("单键 RGB", "單鍵 RGB", "Per-Key RGB");
-    public static string KbTypeOneZoneWithNumpad => T("单分区带小键盘", "單分割區帶數字鍵", "1-Zone with Numpad");
-    public static string KbTypeOneZoneWithoutNumpad => T("单分区无小键盘", "單分割區無數字鍵", "1-Zone without Numpad");
-    public static string KbTypeUnknown => T("未知或不支持", "未知或不支援", "Unknown/Unsupported");
 
     // ─────────────────────────────────────────────────────────────────────────
     // 硬件监控
@@ -505,7 +411,6 @@
     public static string SysAmbient => T("环境传感器", "環境感測器", "Ambient Sensor");
     public static string SysPCH => T("PCH传感器", "PCH感測器", "PCH Sensor");
     public static string SysVR => T("VR传感器", "VR感測器", "VR Sensor");
-    public static string SysKbType => T("键盘灯光类型", "鍵盤燈光類型", "KB Light Type");
     public static string SysAdapterPower => T("原装适配器功率", "原裝充電器功率", "Adapter Wattage");
     public static string SysSensorUnsupported => T("不支持", "不支援", "Unsupported");
     public static string SysSensorDisconnected => T("连接断开", "連接斷開", "Disconnected");
@@ -517,11 +422,6 @@
     // 性能控制 — GPU 功率控制菜单
     // ─────────────────────────────────────────────────────────────────────────
     public static string GpuPowerControlMenu => T("GPU功率控制", "GPU功率控制", "GPU Power Control");
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 灯光控制菜单
-    // ─────────────────────────────────────────────────────────────────────────
-    public static string LightingControl => T("灯光控制", "燈光控制", "Lighting Control");
 
     // ─────────────────────────────────────────────────────────────────────────
     // 硬件监控 — 子菜单标签
@@ -564,7 +464,6 @@
     public static string AcLoadLineBalloonTitle => T("AC Load Line 提示", "AC Load Line 提示", "AC Load Line Hint");
     public static string NoCustomIcon => T("不存在自定义图标custom.ico",
         "找不到自訂圖示 custom.ico", "Custom icon file custom.ico not found.");
-    public static string KeyboardConnectFail => T("键盘连接失败！", "鍵盤連線失敗！", "Keyboard connection failed!");
     public static string CrashMessage => T(
         $"OSH出现意外错误，详细信息请查看{Logger.logFileName}，报告问题时请附带此日志。",
         $"OSH發生意外錯誤，詳細資訊請查看 {Logger.logFileName}，回報問題時請附上此日誌。",
