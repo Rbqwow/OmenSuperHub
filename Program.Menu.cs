@@ -55,14 +55,6 @@ namespace OmenSuperHub {
       }
 
       BuildTrayMenu(trayIcon.ContextMenuStrip);
-      // 延迟安装低级鼠标钩子，避免 SetWindowsHookEx 在启动时造成鼠标卡顿
-      var hookDelayTimer = new System.Windows.Forms.Timer { Interval = 10 };
-      hookDelayTimer.Tick += (s, e) => {
-        hookDelayTimer.Stop();
-        hookDelayTimer.Dispose();
-        InstallTrayScrollHook();
-      };
-      hookDelayTimer.Start();
 
       // Initialize tooltip update timer
       tooltipUpdateTimer = new System.Timers.Timer(1000); // Set interval to 1 second (low, default)
@@ -1312,9 +1304,6 @@ namespace OmenSuperHub {
       omenKeyPresetCandidatesMenu.DropDownOpening += (s, e) => {
         omenKeyPresetCandidatesMenu.DropDownItems.Clear();
 
-        omenKeyPresetCandidatesMenu.DropDownItems.Add(
-            new ToolStripMenuItem(Strings.scrollHint) { Enabled = false });
-        omenKeyPresetCandidatesMenu.DropDownItems.Add(new ToolStripSeparator());
 
         var selectedPresetKeys = GetOmenKeyPresetCandidateKeys();
         foreach (string presetKey in GetAvailablePresetKeys()) {
