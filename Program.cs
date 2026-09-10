@@ -19,7 +19,6 @@ using Microsoft.Win32;
 using static HP.Omen.Core.Model.Device.Models.GraphicsSwitcherHelper;
 using static OmenSuperHub.GpuAppManager;
 using static OmenSuperHub.OmenHardware;
-using static OmenSuperHub.OmenLighting;
 using LibreComputer = LibreHardwareMonitor.Hardware.Computer;
 using LibreHardwareType = LibreHardwareMonitor.Hardware.HardwareType;
 using LibreIHardware = LibreHardwareMonitor.Hardware.IHardware;
@@ -31,19 +30,6 @@ namespace OmenSuperHub {
     [DllImport("user32.dll")]
     static extern bool SetProcessDPIAware();
 
-    static byte currentAnimSpeed = 1, currentAnimDirection = 0, currentAnimTheme = 0, currentAnimEffect = 2;
-    // 单键RGB当前选中状态（用于菜单勾选，null/-1 表示未选择）
-    static string perKeyStaticColorSel = null;
-    static string perKeyAnimationSel = null;
-    static int perKeyBrightnessSel = -1;
-    // 四分区/灯条颜色选择状态（key = device tag, value = 颜色名称；null 表示自定义或未选）
-    static string zoneGlobalColorSel_Keyboard = null;
-    static string zoneGlobalColorSel_LightBar = null;
-    static string[] zoneColorSel_Keyboard = new string[4];
-    static string[] zoneColorSel_LightBar = new string[4];
-    // 四分区/灯条 WMI 协议选择（默认 BasicFourZone；用户可在菜单中切换并持久化）
-    static LightingControlInterface kbControlInterface = LightingControlInterface.BasicFourZone;
-    static LightingControlInterface lbControlInterface = LightingControlInterface.Dojo;
     static int textSize = 40;
     static int countRestore = 0;
     static int alreadyRead = 0, alreadyReadCode = 1000;
@@ -94,14 +80,13 @@ namespace OmenSuperHub {
     static bool Is3FanNb = false, isFanCleanSupported = false, isFanLegacyCleanSupported = false;
     static bool isSysInfoMenuOpen = false;
     static string systemSSID, sku, biosVersion;
-    static bool supportAni = false, supportDojo = false, supportLightbar = false, supportHotSwitch = false;
+    static bool supportHotSwitch = false;
     static bool isCPUPowerControlSupported = false, isAmbientSensorSupported = false;
     static DeviceEnums.DeviceType deviceType;
     static string deviceDisplayName;
     static int cycleNumber;
     static PlatformSettings platformSettings;
     static GraphicsSwitcherMode NvGraphicsMode;
-    static NbKeyboardLightingType kbType;
     static SynchronizationContext uiContext;
     //static Stopwatch sw = Stopwatch.StartNew();
 
@@ -147,7 +132,7 @@ namespace OmenSuperHub {
         string versionString = version.ToString().Replace(".", "");
         alreadyReadCode = new Random(int.Parse(versionString)).Next(1000, 10000);
 
-        // 读取 deviceDisplayName / cycleNumber / deviceType / supportDojo / systemSSID / alreadyRead
+        // 读取 deviceDisplayName / cycleNumber / deviceType / systemSSID / alreadyRead
         LoadDeviceInfoFromRegistry();
         //Console.WriteLine($"0.2: {sw.ElapsedMilliseconds}ms");
         // 每版本仅显示一次
@@ -195,7 +180,6 @@ namespace OmenSuperHub {
             ExtractAndPreloadNativeDll("NvidiaApi.dll");
           }
         });
-        var t4 = Task.Run(() => kbType = GetKeyboardType());
         var t5 = Task.Run(() => NvGraphicsMode = GetGfxMode());
         var t6 = Task.Run(() => {
           SetUnleashMode(); // 固定为释放全部性能模式
@@ -208,8 +192,6 @@ namespace OmenSuperHub {
         var t8 = Task.Run(() => {
           getOmenKeyTask();
           monitorQuery();
-          if (supportDojo && IsLightBarPlatform())
-            supportLightbar = true;
         });
         var t9 = Task.Run(() => {
           SetBrowserEmulationForWebBrowser();
@@ -220,12 +202,8 @@ namespace OmenSuperHub {
         //var t10 = Task.Run(() => isTwoBytePL4 = IsTwoBytePL4Supported());
 
         //Console.WriteLine($"1: {sw.ElapsedMilliseconds}ms");
-        Task.WaitAll(t1, t2, t3, t4, t5, t6, t7, t8, t9);
+        Task.WaitAll(t1, t2, t3, t5, t6, t7, t8, t9);
         //Console.WriteLine($"2: {sw.ElapsedMilliseconds}ms");
-
-        if (FourZoneSupportHelper.IsAnimationSupported(kbType, deviceType, cycleNumber)) {
-          supportAni = true;
-        }
 
         LoadLanguageSetting();  // 必须在 InitTrayIcon 之前，使菜单使用正确语言
         InitTrayIcon();

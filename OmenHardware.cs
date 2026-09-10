@@ -791,59 +791,6 @@ namespace OmenSuperHub {
       SendOmenBiosWmi(0x27, new byte[] { 0x00 }, 0);
     }
 
-    public static void BacklightOn() {
-      SendOmenBiosWmi(0x05, new byte[] { 0xE4 }, 0, 0x20009);
-    }
-
-    public static void BacklightOff() {
-      SendOmenBiosWmi(0x05, new byte[] { 0x64 }, 0, 0x20009);
-    }
-
-    public static byte[] GetLightColor() {
-      // commandType = 2，无额外输入，读取128字节，前3字节为RGB
-      return SendOmenBiosWmi(0x02, new byte[1] { 0 }, 128, 0x20009);
-    }
-
-    /// <summary>
-    /// 设置灯效颜色（inputData 通常为 3 字节 RGB 或 4 字节包含亮度）
-    /// </summary>
-    /// <returns>true 表示命令执行成功，false 表示失败</returns>
-    public static bool SetLightColor(byte[] inputData) {
-      // commandType = 3，写操作，期望返回4字节（实际不关心数据，只判断成功与否）
-      byte[] result = SendOmenBiosWmi(0x03, inputData, 4, 0x20009);
-      return result != null; // 成功时返回非空字节数组（哪怕全0），失败返回null
-    }
-
-    /// <summary>
-    /// 设置亮度（0～100）
-    /// </summary>
-    /// <returns>true 表示成功，false 表示失败</returns>
-    public static bool SetBrightness(byte value) {
-      byte[] inputData = new byte[128];
-      inputData[0] = value;
-      byte[] result = SendOmenBiosWmi(0x05, inputData, 4, 0x20009);
-      return result != null;
-    }
-
-    /// <summary>
-    /// 获取当前 LED 动画效果编号
-    /// </summary>
-    public static int? GetLedAnimation() {
-      byte[] result = SendOmenBiosWmi(0x06, new byte[1] { 0 }, 128, 0x20009);
-      if (result != null && result.Length > 0)
-        return result[0];
-      return null;
-    }
-
-    /// <summary>
-    /// 设置 LED 动画效果（inputData 格式取决于 EC 期望，通常为效果编号+参数）
-    /// </summary>
-    /// <returns>true 表示成功，false 表示失败</returns>
-    public static bool SetLedAnimation(byte[] inputData) {
-      byte[] result = SendOmenBiosWmi(0x07, inputData, 4, 0x20009);
-      return result != null;
-    }
-
     //// 似乎没有作用，且不支持AMD
     //public static void InitializeIntelOC() {
     //  string outputData = SendOmenBiosWmi(0x35, new byte[] { 0x00, 0x00, 0x00, 0x00 }, 128);

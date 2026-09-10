@@ -110,9 +110,6 @@
     <Reference Include="HP.Omen.Core.Model.Device">
       <HintPath>Resources\HP.Omen.Core.Model.Device.dll</HintPath>
     </Reference>
-    <Reference Include="McuSDK2">
-      <HintPath>Resources\McuSDK2.dll</HintPath>
-    </Reference>
     <Reference Include="Microsoft.Bcl.AsyncInterfaces, Version=10.0.0.9, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>packages\Microsoft.Bcl.AsyncInterfaces.10.0.9\lib\net462\Microsoft.Bcl.AsyncInterfaces.dll</HintPath>
     </Reference>
@@ -291,7 +288,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="App\Logger.cs" />
-    <Compile Include="App\OmenLighting.cs" />
     <Compile Include="FloatingForm.cs">
       <SubType>Form</SubType>
     </Compile>
