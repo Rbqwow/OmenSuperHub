@@ -111,10 +111,13 @@ namespace OmenSuperHub {
       }
     }
 
-    static void HandleOmenKeyAction() {
-      if (!omenKeyTriggered) return;
-
-      omenKeyTriggered = false;
+    /// <summary>
+    /// 在 UI 线程上执行当前绑定的 OMEN 键动作。
+    /// 不再依赖 100ms 轮询定时器与 omenKeyTriggered 布尔桥接，
+    /// 改由管道监听任务经 uiContext.Post 直接派发到本方法。
+    /// </summary>
+    static void ExecuteOmenKeyAction() {
+      if (_isExiting) return;
       switch (omenKey) {
         case OmenKeyActions.Overlay:
           ToggleFloatingBar();
@@ -131,9 +134,20 @@ namespace OmenSuperHub {
       }
     }
 
+    /// <summary>
+    /// 把 OMEN 键触发事件从后台管道线程派发到 UI 线程（事件驱动，无轮询）。
+    /// uiContext 尚未就绪（启动早期）或已失效时安全丢弃本次触发。
+    /// </summary>
+    static void DispatchOmenKeyAction() {
+      if (_isExiting) return;
+      var ctx = uiContext;
+      if (ctx == null) return;   // 启动早期窗口：此时 OMEN 键订阅尚未建立，不会真正丢事件
+      ctx.Post(_ => ExecuteOmenKeyAction(), null);
+    }
+
     static void ApplyOmenKeyAction(string action, bool save = true) {
       omenKey = OmenKeyActions.IsKnown(action) ? action : OmenKeyActions.Default;
-      checkFloatingTimer.Enabled = OmenKeyActions.UsesPipe(omenKey);
+      // 原 checkFloatingTimer.Enabled = OmenKeyActions.UsesPipe(omenKey) 已随轮询定时器一并移除
 
       OmenKeyOff();
       if (omenKey != OmenKeyActions.None)
@@ -934,24 +948,47 @@ namespace OmenSuperHub {
     }
 
     static CancellationTokenSource _pipeCts;
+
+    /// <summary>
+    /// 命名管道异步监听任务。
+    ///
+    /// 原实现使用无超时的同步 `pipeServer.WaitForConnection()`：该重载不支持
+    /// CancellationToken，`_pipeCts.Cancel()` 无法解除内核级阻塞，退出时后台线程
+    /// 只能依赖进程强杀；同时消息消费依赖 100ms UI 轮询定时器拉取静态布尔量。
+    ///
+    /// 现改为：
+    ///   - `PipeOptions.Asynchronous` + `await WaitForConnectionAsync(token)`，可被取消；
+    ///   - 消息到达后经 `uiContext.Post` 直接事件驱动派发到 UI 线程，废除 100ms 轮询；
+    ///   - 异常分支加入 1s 退避，避免异常时忙循环。
+    /// </summary>
     static void getOmenKeyTask() {
       _pipeCts = new CancellationTokenSource();
       var token = _pipeCts.Token;
-      System.Threading.Tasks.Task.Run(() => {
+      System.Threading.Tasks.Task.Run(async () => {
         while (!token.IsCancellationRequested) {
           try {
-            using (var pipeServer = new NamedPipeServerStream("OmenSuperHubPipe", PipeDirection.In)) {
-              pipeServer.WaitForConnection();
+            using (var pipeServer = new NamedPipeServerStream(
+                       "OmenSuperHubPipe", PipeDirection.In, 1,
+                       PipeTransmissionMode.Byte, PipeOptions.Asynchronous)) {
+              await pipeServer.WaitForConnectionAsync(token).ConfigureAwait(false);
               using (var reader = new StreamReader(pipeServer)) {
-                string message = reader.ReadToEnd();
-                if (message.Contains("OmenKeyTriggered") && !omenKeyTriggered)
-                  omenKeyTriggered = true;
+                string message = await reader.ReadToEndAsync().ConfigureAwait(false);
+                if (message.Contains("OmenKeyTriggered"))
+                  DispatchOmenKeyAction();
               }
             }
+          } catch (OperationCanceledException) {
+            break;
           } catch (Exception) when (token.IsCancellationRequested) {
             break;
           } catch (Exception ex) {
             Logger.Error("Pipe error: " + ex.Message);
+            // 退避，避免管道异常时陷入忙循环
+            try {
+              await System.Threading.Tasks.Task.Delay(1000, token).ConfigureAwait(false);
+            } catch (OperationCanceledException) {
+              break;
+            }
           }
         }
       }, token);

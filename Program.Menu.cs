@@ -1036,19 +1036,11 @@ namespace OmenSuperHub {
       ToolStripMenuItem hardwareMonitorMenu = new ToolStripMenuItem(Strings.HwMonitor);
       ToolStripMenuItem monitorCPUMenu = new ToolStripMenuItem(Strings.MonitorCpuLabel);
       monitorCPUMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorCpuOn, "monitorCPUGroup", (s, e) => {
-        bool wasAllOff = !monitorCPU && !monitorGPU;
         monitorCPU = true;
         cpuTempReady = false; // 等待获取到温度后再参与风扇控制
         rawPowerCPU = 0f;     // 清除可能残留的脏功率值
         CPUPower = 0f;
-        if (wasAllOff) {
-          // 从全关状态重启监控进程
-          tempReady = false;
-          gpuTempReady = false;
-          StartHardwareMonitor();
-        } else {
-          SetCpuMonitorState(true);
-        }
+        SetCpuMonitorState(true);
         SaveConfig("MonitorCPU");
       }, true));
       monitorCPUMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorCpuOff, "monitorCPUGroup", (s, e) => {
@@ -1064,10 +1056,6 @@ namespace OmenSuperHub {
         rawPowerCPU = 0f;  // 关闭时清零，避免重新开启时读到旧值
         CPUPower = 0f;
         SetCpuMonitorState(false);
-        // 若CPU和GPU均已关闭，停止监控进程
-        if (!monitorCPU && !monitorGPU) {
-          StopHardwareMonitor();
-        }
         SaveConfig("MonitorCPU");
         // 手动更新勾选状态（因为提前 return 会跳过 CreateMenuItem 的自动勾选）
       }, false));
@@ -1078,26 +1066,11 @@ namespace OmenSuperHub {
       if (hasNVIDIAGpu) {
         ToolStripMenuItem monitorGPUMenu = new ToolStripMenuItem(Strings.MonitorGpuLabel);
         monitorGPUMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorGpuOn, "monitorGPUGroup", (s, e) => {
-          bool wasAllOff = !monitorCPU && !monitorGPU;
           monitorGPU = true;
           gpuTempReady = false; // 等待获取到温度后再参与风扇控制
           rawPowerGPU = 0f;     // 清除可能残留的脏功率值
           GPUPower = 0f;
-          if (hasStopAuto)
-            autoStopMonitorGPU = false;
-          //重置自动开启标志
-          hasStartAuto = false;
-          autoStartMonitorGPU = true;
-          if (wasAllOff) {
-            // 从全关状态重启监控进程
-            tempReady = false;
-            cpuTempReady = false;
-            rawPowerCPU = 0f;
-                CPUPower = 0f;
-                StartHardwareMonitor();
-          } else {
-            SetGpuMonitorState(true);
-          }
+          SetGpuMonitorState(true);
           SaveConfig("MonitorGPU");
         }, true));
         monitorGPUMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorGpuOff, "monitorGPUGroup", (s, e) => {
@@ -1112,16 +1085,7 @@ namespace OmenSuperHub {
           gpuTempReady = false;
           rawPowerGPU = 0f;  // 关闭时清零，避免重新开启时读到旧值
           GPUPower = 0f;
-          if (hasStartAuto)
-            autoStartMonitorGPU = false;
-          //重置自动关闭标志
-          hasStopAuto = false;
-          autoStopMonitorGPU = true;
           SetGpuMonitorState(false);
-          // 若CPU和GPU均已关闭，停止监控进程
-          if (!monitorCPU && !monitorGPU) {
-            StopHardwareMonitor();
-          }
           SaveConfig("MonitorGPU");
         }, false));
         monitorGPUMenu.DropDownItems.Add(new ToolStripSeparator());
@@ -1143,13 +1107,11 @@ namespace OmenSuperHub {
       monitorRefreshMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorRefreshHigh, "monitorRefreshGroup", (s, e) => {
         monitorRefreshRate = "high";
         tooltipUpdateTimer.Interval = 250;
-        SetMonitorInterval(250);
         SaveConfig("MonitorRefreshRate");
       }, false));
       monitorRefreshMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorRefreshLow, "monitorRefreshGroup", (s, e) => {
         monitorRefreshRate = "low";
         tooltipUpdateTimer.Interval = 1000;
-        SetMonitorInterval(1000);
         SaveConfig("MonitorRefreshRate");
       }, true));
       hardwareMonitorMenu.DropDownItems.Add(monitorRefreshMenu);
