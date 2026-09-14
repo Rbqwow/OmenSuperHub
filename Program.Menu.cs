@@ -21,7 +21,7 @@ namespace OmenSuperHub {
 
     static void InitTrayIcon() {
       trayIcon = new NotifyIcon() {
-        Icon = Properties.Resources.smallfan,
+        Icon = DefaultTrayIcon,
         ContextMenuStrip = new ContextMenuStrip(),
         Visible = true
       };
@@ -36,7 +36,7 @@ namespace OmenSuperHub {
             if (customIcon == "custom" && !CheckCustomIcon()) {
               customIcon = "original";
               SaveConfig("CustomIcon");
-              trayIcon.Icon = Properties.Resources.smallfan;
+              trayIcon.Icon = DefaultTrayIcon;
               UpdateCheckedState("CustomIcon", Strings.IconOriginal);
             }
           }
@@ -46,7 +46,7 @@ namespace OmenSuperHub {
       }
 
       switch (customIcon) {
-        case "original": trayIcon.Icon = Properties.Resources.smallfan; break;
+        case "original": trayIcon.Icon = DefaultTrayIcon; break;
         case "custom": SetCustomIcon(); break;
         case "dynamic": UpdateDynamicIcon(); break;
       }
@@ -1103,7 +1103,7 @@ namespace OmenSuperHub {
       ToolStripMenuItem customIconMenu = new ToolStripMenuItem(Strings.IconMenu);
       customIconMenu.DropDownItems.Add(CreateMenuItem(Strings.IconOriginal, "customIconGroup", (s, e) => {
         customIcon = "original";
-        trayIcon.Icon = Properties.Resources.smallfan;
+        SwapTrayIconToDefault();   // 释放此前的动态 / 自定义图标，并复用默认图标的唯一实例
         SaveConfig("CustomIcon");
       }, true));
       customIconMenu.DropDownItems.Add(CreateMenuItem(Strings.IconCustom, "customIconGroup", (s, e) => {
