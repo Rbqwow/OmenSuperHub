@@ -675,7 +675,7 @@ namespace OmenSuperHub {
     static void SaveConfig(string configName = null) {
       // 内置预设下调整设置时，不再强制切换到 Custom1，直接保存注册表（不关联任何预设子键）
       try {
-        // 六项监控显示开关在自定义预设下只写入当前预设，避免污染内置预设的全局值。
+        // 四项监控显示开关在自定义预设下只写入当前预设，避免污染内置预设的全局值。
         if (!IsBuiltInPreset(currentPreset) && IsMonitorMetricConfig(configName)) {
           SavePresetToRegistry(currentPreset);
           return;
@@ -1013,32 +1013,19 @@ namespace OmenSuperHub {
         UpdateCheckedState("monitorGPUGroup", monitorGPU ? Strings.MonitorGpuOn : Strings.MonitorGpuOff);
         UpdateCheckedState("monitorFanGroup", monitorFan ? Strings.MonitorFanOn : Strings.MonitorFanOff);
 
-        bool wasMonitorRunning = hwMonitorProcess != null && !hwMonitorProcess.HasExited;
-        if (monitorCPU || monitorGPU) {
-          if (!wasMonitorRunning) {
-            cpuTempReady = gpuTempReady = tempReady = false;
-            StartHardwareMonitor();
-          } else {
-            if (!monitorCPU) { cpuTempReady = false; rawPowerCPU = 0f; CPUPower = 0f; }
-            if (!monitorGPU) { gpuTempReady = false; rawPowerGPU = 0f; GPUPower = 0f; }
-            SetCpuMonitorState(monitorCPU);
-            SetGpuMonitorState(monitorGPU);
-          }
-        } else {
-          if (wasMonitorRunning) {
-            cpuTempReady = gpuTempReady = tempReady = false;
-            StopHardwareMonitor();
-          }
-        }
+        if (!monitorCPU) { cpuTempReady = false; rawPowerCPU = 0f; CPUPower = 0f; }
+        if (!monitorGPU) { gpuTempReady = false; rawPowerGPU = 0f; GPUPower = 0f; }
+        SetCpuMonitorState(monitorCPU);
+        SetGpuMonitorState(monitorGPU);
 
         switch (monitorRefreshRate) {
           case "high":
-            tooltipUpdateTimer.Interval = 250; SetMonitorInterval(250);
+            tooltipUpdateTimer.Interval = 250;
             UpdateCheckedState("monitorRefreshGroup", Strings.MonitorRefreshHigh);
             break;
           default:
             monitorRefreshRate = "low";
-            tooltipUpdateTimer.Interval = 1000; SetMonitorInterval(1000);
+            tooltipUpdateTimer.Interval = 1000;
             UpdateCheckedState("monitorRefreshGroup", Strings.MonitorRefreshLow);
             break;
         }
