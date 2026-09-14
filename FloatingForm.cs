@@ -12,6 +12,25 @@ namespace OmenSuperHub {
 
     private PictureBox displayPictureBox;
 
+    // ── 渲染缓存──────────────────────────────────────────────────
+    // 目的：消除 250ms 周期内重复创建 Bitmap / Font / SolidBrush / StringFormat 造成的
+    // Gen0 GC 压力，并通过脏检测跳过内容未变化的重绘。
+    private Bitmap _backBuffer;                 // 复用的全彩位图缓冲（仅尺寸变化时重建）
+    private Font _cachedFont;                   // 复用的字体对象
+    private int _cachedFontSize;
+    private StringFormat _textFormat;           // 复用的排版格式
+    private readonly Dictionary<string, SolidBrush> _brushPool = new Dictionary<string, SolidBrush>();
+    private SolidBrush _valueBrush;             // 复用的数值画刷
+    private Bitmap _measureSurface;             // 度量用 1x1 位图（仅窗体句柄未就绪时使用）
+
+    // 脏检测键：内容 + 字号 + 目标显示器 DeviceName + 目标工作区 Bounds。
+    // 后两项不可省略 —— 否则跨显示器拖动或工作区变化（分辨率/DPI/任务栏）后不会重绘。
+    private string _lastText;
+    private int _lastTextSize;
+    private string _lastScreenDevice;
+    private Rectangle _lastScreenBounds;
+    private bool _hasRendered;
+
     private sealed class DisplayLine {
       public string Title;
       public string Value;
@@ -36,20 +55,89 @@ namespace OmenSuperHub {
       SetAnchoredPosition(loc, screen);
     }
 
-    private void ApplySupersampling(string text, int textSize, Screen screen) {
-      if (string.IsNullOrEmpty(text) || textSize <= 0)
-        return;
+    // ── 缓存获取器 ───────────────────────────────────────────────────────
+    private Font GetOrCreateFont(int size) {
+      if (_cachedFont == null || _cachedFontSize != size) {
+        var previous = _cachedFont;
+        _cachedFont = new Font("Calibri", size, FontStyle.Bold, GraphicsUnit.World);
+        _cachedFontSize = size;
+        previous?.Dispose();
+      }
+      return _cachedFont;
+    }
 
-      var workingArea = (screen ?? Screen.PrimaryScreen).WorkingArea;
+    private SolidBrush GetCachedBrush(Color color) {
+      string key = color.ToArgb().ToString();
+      SolidBrush brush;
+      if (!_brushPool.TryGetValue(key, out brush)) {
+        brush = new SolidBrush(color);
+        _brushPool[key] = brush;
+      }
+      return brush;
+    }
+
+    private SolidBrush ValueBrush {
+      get {
+        if (_valueBrush == null)
+          _valueBrush = new SolidBrush(Color.FromArgb(255, 128, 0));
+        return _valueBrush;
+      }
+    }
+
+    private StringFormat TextFormat {
+      get {
+        if (_textFormat == null)
+          _textFormat = CreateTextFormat();
+        return _textFormat;
+      }
+    }
+
+    /// <summary>
+    /// 获取度量用 Graphics：优先复用窗体自身的设备上下文（避免每次分配临时位图）；
+    /// 窗体句柄尚未创建（构造函数早期）时，退回一个**复用**的 1x1 度量位图。
+    /// 调用方负责 Dispose 返回的 Graphics。
+    /// </summary>
+    private Graphics CreateMeasureGraphics() {
+      if (IsHandleCreated) {
+        try { return this.CreateGraphics(); } catch { /* 句柄竞态时退回度量位图 */ }
+      }
+      if (_measureSurface == null)
+        _measureSurface = new Bitmap(1, 1, PixelFormat.Format32bppArgb);
+      return Graphics.FromImage(_measureSurface);
+    }
+
+    /// <summary>
+    /// 按需重建悬浮窗位图。返回 true 表示位图内容已重绘（调用方需重新呈现），
+    /// 返回 false 表示脏检测命中或渲染失败，位图内容与上次一致。
+    /// </summary>
+    private bool ApplySupersampling(string text, int textSize, Screen screen) {
+      if (string.IsNullOrEmpty(text) || textSize <= 0)
+        return false;
+
+      var targetScreen = screen ?? Screen.PrimaryScreen;
+      var workingArea = targetScreen.WorkingArea;
+
+      // ── 脏检测 ─────────────────────────────────────────────────────────
+      if (_hasRendered
+          && text == _lastText
+          && textSize == _lastTextSize
+          && targetScreen.DeviceName == _lastScreenDevice
+          && workingArea == _lastScreenBounds) {
+        return false;   // 内容与目标显示环境均未变化，跳过整条重绘管线
+      }
+
       int maxBitmapWidth = Math.Max(1, workingArea.Width - ScreenMargin * 2);
       float maxContentWidth = Math.Max(1, maxBitmapWidth - ContentPadding * 2);
-      Bitmap newBitmap = null;
+
+      Bitmap previousBuffer = _backBuffer;
+      Bitmap newBuffer = null;
+      bool bufferRecreated = false;
 
       try {
-        using (var measureBitmap = new Bitmap(1, 1, PixelFormat.Format32bppArgb))
-        using (var measureGraphics = Graphics.FromImage(measureBitmap))
-        using (var font = new Font("Calibri", textSize, FontStyle.Bold, GraphicsUnit.World))
-        using (var format = CreateTextFormat()) {
+        var font = GetOrCreateFont(textSize);
+        var format = TextFormat;
+
+        using (var measureGraphics = CreateMeasureGraphics()) {
           var lines = BuildDisplayLines(text, font, measureGraphics, format, maxContentWidth);
           float lineHeight = (float)Math.Ceiling(font.GetHeight(measureGraphics));
           float widestLine = 1;
@@ -61,40 +149,56 @@ namespace OmenSuperHub {
           int bitmapHeight = Math.Max(1,
             (int)Math.Ceiling(lineHeight * lines.Count) + ContentPadding * 2);
 
-          newBitmap = new Bitmap(bitmapWidth, bitmapHeight, PixelFormat.Format32bppArgb);
-          using (Graphics graphics = Graphics.FromImage(newBitmap)) {
+          // 位图缓冲仅在尺寸变化时重建
+          if (previousBuffer == null
+              || previousBuffer.Width != bitmapWidth
+              || previousBuffer.Height != bitmapHeight) {
+            newBuffer = new Bitmap(bitmapWidth, bitmapHeight, PixelFormat.Format32bppArgb);
+            bufferRecreated = true;
+          } else {
+            newBuffer = previousBuffer;
+          }
+
+          using (Graphics graphics = Graphics.FromImage(newBuffer)) {
             graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             // graphics.Clear(Color.FromArgb(180, 0, 0, 0));
             //透明
             graphics.Clear(Color.Transparent);
 
             float y = ContentPadding;
-            using (Brush valueBrush = new SolidBrush(Color.FromArgb(255, 128, 0))) {
-              foreach (var line in lines) {
-                float x = ContentPadding;
-                if (!string.IsNullOrEmpty(line.Title)) {
-                  string titleKey = line.Title.TrimEnd(':').Trim();
-                  using (Brush titleBrush = new SolidBrush(GetColorForTitle(titleKey)))
-                    graphics.DrawString(line.Title, font, titleBrush, new PointF(x, y), format);
-                  x += line.TitleWidth;
-                }
-
-                graphics.DrawString(line.Value, font, valueBrush, new PointF(x, y), format);
-                y += lineHeight;
+            foreach (var line in lines) {
+              float x = ContentPadding;
+              if (!string.IsNullOrEmpty(line.Title)) {
+                string titleKey = line.Title.TrimEnd(':').Trim();
+                graphics.DrawString(line.Title, font, GetCachedBrush(GetColorForTitle(titleKey)),
+                                    new PointF(x, y), format);
+                x += line.TitleWidth;
               }
+
+              graphics.DrawString(line.Value, font, ValueBrush, new PointF(x, y), format);
+              y += lineHeight;
             }
           }
         }
       } catch (ArgumentException ex) {
-        newBitmap?.Dispose();
+        if (bufferRecreated) newBuffer?.Dispose();   // 失败时丢弃新建缓冲，保留原缓冲
         System.Diagnostics.Debug.WriteLine($"Bitmap 创建失败: {ex.Message}");
-        return;
+        return false;
       }
 
-      var oldImage = displayPictureBox.Image;
-      displayPictureBox.Image = newBitmap;
-      displayPictureBox.Size = newBitmap.Size;
-      oldImage?.Dispose();
+      // 先切换引用，再释放旧缓冲（旧缓冲此刻已无任何引用者）
+      _backBuffer = newBuffer;
+      displayPictureBox.Image = newBuffer;
+      displayPictureBox.Size = newBuffer.Size;
+      if (bufferRecreated)
+        previousBuffer?.Dispose();
+
+      _lastText = text;
+      _lastTextSize = textSize;
+      _lastScreenDevice = targetScreen.DeviceName;
+      _lastScreenBounds = workingArea;
+      _hasRendered = true;
+      return true;
     }
 
     private static StringFormat CreateTextFormat() {
@@ -170,15 +274,24 @@ namespace OmenSuperHub {
     }
 
     public void SetText(string text, int textSize, string loc, Screen screen = null) {
+      if (IsDisposed) return;   // 窗体已释放：缓存对象均已 Dispose，直接忽略
       if (InvokeRequired) {
         BeginInvoke(new Action(() => SetText(text, textSize, loc, screen)));
         return;
       }
       if (textSize <= 0) return;
-      ApplySupersampling(text, textSize, screen);
-      AdjustFormSize();
-      SetAnchoredPosition(loc, screen);
-      RenderCurrentImage();
+
+      // 脏检测命中且锚定位置未变化时跳过整条呈现管线：否则 RenderLayered 中的
+      // GetHbitmap 仍会每帧复制整张位图并调用 UpdateLayeredWindow（250ms 档下每秒 4 次）。
+      bool contentChanged = ApplySupersampling(text, textSize, screen);
+      if (contentChanged) AdjustFormSize();
+
+      Point previousLocation = this.Location;
+      SetAnchoredPosition(loc, screen);          // 位置变化时 OnMove 已用最新位图调用 RenderLayered
+      bool moved = this.Location != previousLocation;
+
+      if (contentChanged && !moved)
+        RenderCurrentImage();
     }
 
     private void AdjustFormSize() {
@@ -188,7 +301,7 @@ namespace OmenSuperHub {
 
     protected override void OnMove(EventArgs e) {
       base.OnMove(e);
-      if (displayPictureBox.Image is Bitmap bmp && IsHandleCreated)
+      if (displayPictureBox?.Image is Bitmap bmp && IsHandleCreated)
         RenderLayered(bmp);
     }
 
@@ -225,36 +338,89 @@ namespace OmenSuperHub {
     }
 
     private void RenderCurrentImage() {
-      if (displayPictureBox.Image is Bitmap bitmap && IsHandleCreated)
+      if (displayPictureBox?.Image is Bitmap bitmap && IsHandleCreated)
         RenderLayered(bitmap);
     }
 
     private void RenderLayered(Bitmap bitmap) {
       if (bitmap == null) return;
 
-      IntPtr screenDC  = GetDC(IntPtr.Zero);
-      IntPtr memDC     = CreateCompatibleDC(screenDC);
-      IntPtr hBitmap   = bitmap.GetHbitmap(Color.FromArgb(0));
-      IntPtr oldBitmap = SelectObject(memDC, hBitmap);
+      IntPtr screenDC = IntPtr.Zero;
+      IntPtr memDC = IntPtr.Zero;
+      IntPtr hBitmap = IntPtr.Zero;
+      IntPtr oldBitmap = IntPtr.Zero;
 
-      NativeSize  size  = new NativeSize(bitmap.Width, bitmap.Height);
-      NativePoint ptSrc = new NativePoint(0, 0);
-      NativePoint ptDst = new NativePoint(this.Left, this.Top);
+      try {
+        screenDC = GetDC(IntPtr.Zero);
+        if (screenDC == IntPtr.Zero) return;
+        memDC = CreateCompatibleDC(screenDC);
+        if (memDC == IntPtr.Zero) return;
+        hBitmap = bitmap.GetHbitmap(Color.FromArgb(0));
+        if (hBitmap == IntPtr.Zero) return;
+        oldBitmap = SelectObject(memDC, hBitmap);
 
-      BLENDFUNCTION blend = new BLENDFUNCTION {
-        BlendOp             = AC_SRC_OVER,
-        BlendFlags          = 0,
-        SourceConstantAlpha = 255,
-        AlphaFormat         = AC_SRC_ALPHA
-      };
+        NativeSize size = new NativeSize(bitmap.Width, bitmap.Height);
+        NativePoint ptSrc = new NativePoint(0, 0);
+        NativePoint ptDst = new NativePoint(this.Left, this.Top);
 
-      UpdateLayeredWindow(this.Handle, screenDC, ref ptDst, ref size,
-                          memDC, ref ptSrc, 0, ref blend, ULW_ALPHA);
+        BLENDFUNCTION blend = new BLENDFUNCTION {
+          BlendOp = AC_SRC_OVER,
+          BlendFlags = 0,
+          SourceConstantAlpha = 255,
+          AlphaFormat = AC_SRC_ALPHA
+        };
 
-      SelectObject(memDC, oldBitmap);
-      DeleteObject(hBitmap);
-      DeleteDC(memDC);
-      ReleaseDC(IntPtr.Zero, screenDC);
+        UpdateLayeredWindow(this.Handle, screenDC, ref ptDst, ref size,
+                            memDC, ref ptSrc, 0, ref blend, ULW_ALPHA);
+      } catch (Exception ex) {
+        // 显卡重置 / 分辨率变更 / 句柄失效等异常不得导致 GDI 句柄泄漏
+        System.Diagnostics.Debug.WriteLine($"RenderLayered 失败: {ex.Message}");
+      } finally {
+        // 释放顺序与获取顺序严格相反；每一步独立 try/catch，
+        // 确保异常路径下 GDI 句柄数不增长。
+        try { if (memDC != IntPtr.Zero && oldBitmap != IntPtr.Zero) SelectObject(memDC, oldBitmap); } catch { }
+        try { if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap); } catch { }
+        try { if (memDC != IntPtr.Zero) DeleteDC(memDC); } catch { }
+        try { if (screenDC != IntPtr.Zero) ReleaseDC(IntPtr.Zero, screenDC); } catch { }
+      }
+    }
+
+    /// <summary>
+    /// 释放全部渲染缓存对象。
+    /// 缓存对象（位图缓冲 / 字体 / 画刷池 / 排版格式 / 度量位图）均为本窗体独占，
+    /// 必须在窗体释放时显式 Dispose，否则会在托管堆外滞留 GDI 句柄。
+    /// </summary>
+    protected override void Dispose(bool disposing) {
+      if (disposing) {
+        // 先解除 PictureBox 对位图的引用，再释放位图，避免释放后仍被访问
+        if (displayPictureBox != null)
+          displayPictureBox.Image = null;
+
+        _backBuffer?.Dispose();
+        _backBuffer = null;
+
+        _cachedFont?.Dispose();
+        _cachedFont = null;
+        _cachedFontSize = 0;
+
+        foreach (var brush in _brushPool.Values)
+          brush.Dispose();
+        _brushPool.Clear();
+
+        _valueBrush?.Dispose();
+        _valueBrush = null;
+
+        _textFormat?.Dispose();
+        _textFormat = null;
+
+        _measureSurface?.Dispose();
+        _measureSurface = null;
+
+        displayPictureBox?.Dispose();
+        displayPictureBox = null;
+      }
+
+      base.Dispose(disposing);
     }
 
     // ── 常量 ─────────────────────────────────────────────────────────────

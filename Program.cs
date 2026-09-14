@@ -69,6 +69,13 @@ namespace OmenSuperHub {
     static System.Timers.Timer tooltipUpdateTimer; // Timer for updating tooltip
     static System.Windows.Forms.Timer optimiseTimer;
     static NotifyIcon trayIcon;
+    // 内置默认托盘图标的唯一实例。Properties.Resources.smallfan 每次访问都会经 ResourceManager
+    // 反序列化出一个新的 Icon（非基元类型资源不缓存）：用它做引用比较恒为 true，且每次访问都
+    // 产生一个只能等终结器回收的 HICON。默认图标的赋值与比较一律经由本字段。
+    static readonly Icon DefaultTrayIcon = Properties.Resources.smallfan;
+    // 上次成功应用到托盘的动态图标及其显示数值（仅 UI 线程写入），用于跳过数值未变化时的重绘与 Shell 通知
+    static Icon _lastDynamicIcon;
+    static int _lastDynamicIconValue = int.MinValue;
     static FloatingForm floatingForm;
     static ToolStripMenuItem irSensorMenu;
     static ToolStripMenuItem ambientSensorMenu;
@@ -543,12 +550,23 @@ namespace OmenSuperHub {
       if (customIcon != "dynamic") return;
       if (trayIcon?.ContextMenuStrip != null && trayIcon.ContextMenuStrip.Visible) return;
       if (monitorCPU) {
-        GenerateDynamicIcon((int)CPUTemp);
+        GenerateDynamicIconIfChanged((int)CPUTemp);
       } else if (monitorGPU) {
-        GenerateDynamicIcon((int)GPUTemp);
+        GenerateDynamicIconIfChanged((int)GPUTemp);
       } else {
-        trayIcon.Icon = Properties.Resources.smallfan;
+        ApplyTrayIconSwapToDefault();
       }
+    }
+
+    /// <summary>
+    /// 数值未变化且托盘当前显示的仍是上次生成的动态图标时，跳过位图渲染、HICON 创建与
+    /// Shell_NotifyIcon 更新（250ms 档下原本每秒执行 4 次）。
+    /// </summary>
+    static void GenerateDynamicIconIfChanged(int number) {
+      var current = trayIcon?.Icon;
+      if (number == _lastDynamicIconValue && current != null && ReferenceEquals(current, _lastDynamicIcon))
+        return;
+      GenerateDynamicIcon(number);
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
@@ -559,39 +577,101 @@ namespace OmenSuperHub {
       int width = iconSize.Width * 2;
       int height = iconSize.Height * 2;
 
-      using (Bitmap bitmap = new Bitmap(width, height)) {
-        using (Graphics graphics = Graphics.FromImage(bitmap)) {
-          graphics.Clear(Color.Transparent);
-          graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+      Icon newIcon = null;
+      IntPtr hIcon = IntPtr.Zero;
 
-          string text = number.ToString("00");
+      try {
+        using (Bitmap bitmap = new Bitmap(width, height)) {
+          using (Graphics graphics = Graphics.FromImage(bitmap)) {
+            graphics.Clear(Color.Transparent);
+            graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
 
-          using (Font font = new Font("Arial", 45.5f, FontStyle.Bold)) {
-            // 测量文本大小
-            SizeF textSize = graphics.MeasureString(text, font);
+            string text = number.ToString("00");
 
-            // 计算居中位置
-            float x = (width - textSize.Width) / 2;
-            float y = (height - textSize.Height) / 8;
+            using (Font font = new Font("Arial", 45.5f, FontStyle.Bold)) {
+              // 测量文本大小
+              SizeF textSize = graphics.MeasureString(text, font);
 
-            // 绘制文本
-            graphics.DrawString(text, font, Brushes.Tan, x, y);
+              // 计算居中位置
+              float x = (width - textSize.Width) / 2;
+              float y = (height - textSize.Height) / 8;
+
+              // 绘制文本
+              graphics.DrawString(text, font, Brushes.Tan, x, y);
+            }
+
+            // 转换为图标
+            hIcon = bitmap.GetHicon();
+            // Icon.FromHandle 仅对原生句柄做**弱引用**封装，不复制位图数据。
+            // 必须先 Clone() 得到独立托管副本，之后才可安全销毁原始 hIcon，
+            // 否则任务栏（Shell）正在引用的底层 HICON 会被提前物理释放，
+            // 导致图标花屏或偶发 ArgumentException。
+            using (Icon temp = Icon.FromHandle(hIcon))
+              newIcon = (Icon)temp.Clone();
           }
-
-          // 转换为图标
-          IntPtr hIcon = bitmap.GetHicon();
-          Icon newIcon = Icon.FromHandle(hIcon);
-          // 替换托盘图标
-          Icon oldIcon = trayIcon.Icon;
-          trayIcon.Icon = newIcon;
-          // 如果旧图标不是默认图标，则显式释放
-          if (oldIcon != null && oldIcon != Properties.Resources.smallfan) {
-            oldIcon.Dispose();
-          }
-          // 销毁旧句柄（注意：不能直接销毁，因为 Icon.FromHandle 需要手动释放）
-          DestroyIcon(hIcon);
         }
+      } finally {
+        // 副本已独立，此处销毁原始句柄不会影响 newIcon
+        if (hIcon != IntPtr.Zero)
+          DestroyIcon(hIcon);
       }
+
+      ApplyTrayIconSwap(newIcon, number);
+    }
+
+    /// <summary>
+    /// 把托盘图标的新图标切回 UI 线程赋值。
+    /// NotifyIcon 创建于 UI 主线程，并持有接收 Shell 消息的不可见原生窗口；
+    /// 从线程池线程直接赋值 `trayIcon.Icon` 违背 WinForms 线程访问隔离规范。
+    /// uiContext 为空或已进入退出流程时安全降级：直接释放新图标并保留旧图标，避免句柄泄漏。
+    /// </summary>
+    static void ApplyTrayIconSwap(Icon newIcon, int number) {
+      if (newIcon == null) return;
+
+      var ctx = uiContext;
+      if (_isExiting || ctx == null) {
+        newIcon.Dispose();   // 安全降级：释放未被采用的图标，旧图标保持不变
+        return;
+      }
+
+      ctx.Post(_ => SwapTrayIcon(newIcon, number), null);
+    }
+
+    /// <summary>把"切回内置图标"的动作切回 UI 线程执行。</summary>
+    static void ApplyTrayIconSwapToDefault() {
+      var ctx = uiContext;
+      if (_isExiting || ctx == null) return;   // 无新建资源，无需释放
+      if (ReferenceEquals(trayIcon?.Icon, DefaultTrayIcon)) return;   // 已是默认图标，无需切回 UI 线程
+      ctx.Post(_ => SwapTrayIconToDefault(), null);
+    }
+
+    /// <summary>仅在 UI 线程调用：切换到新的动态图标并释放旧图标。</summary>
+    static void SwapTrayIcon(Icon newIcon, int number) {
+      if (_isExiting || trayIcon == null || newIcon == null) {
+        newIcon?.Dispose();   // 未能采用则显式释放，避免句柄泄漏
+        return;
+      }
+
+      Icon oldIcon = trayIcon.Icon;
+      trayIcon.Icon = newIcon;
+      _lastDynamicIconValue = number;
+      _lastDynamicIcon = newIcon;
+      // 旧图标为动态图标或自定义图标（本进程独占）时显式释放；默认图标为共享实例，不得释放
+      if (oldIcon != null && !ReferenceEquals(oldIcon, DefaultTrayIcon)) {
+        oldIcon.Dispose();
+      }
+    }
+
+    /// <summary>仅在 UI 线程调用：切回内置图标并释放此前的动态 / 自定义图标。</summary>
+    static void SwapTrayIconToDefault() {
+      if (_isExiting || trayIcon == null) return;
+
+      Icon oldIcon = trayIcon.Icon;
+      if (ReferenceEquals(oldIcon, DefaultTrayIcon)) return;   // 已是默认图标，跳过 Shell 通知
+      trayIcon.Icon = DefaultTrayIcon;
+      _lastDynamicIcon = null;
+      _lastDynamicIconValue = int.MinValue;
+      oldIcon?.Dispose();
     }
 
     static void UpdateTooltip() {

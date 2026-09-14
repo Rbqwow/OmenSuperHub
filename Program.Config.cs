@@ -1188,7 +1188,7 @@ namespace OmenSuperHub {
 
           customIcon = (string)key.GetValue("CustomIcon", "original");
           switch (customIcon) {
-            case "original": trayIcon.Icon = Properties.Resources.smallfan; UpdateCheckedState("customIconGroup", Strings.IconOriginal); break;
+            case "original": trayIcon.Icon = DefaultTrayIcon; UpdateCheckedState("customIconGroup", Strings.IconOriginal); break;
             case "custom": SetCustomIcon(); UpdateCheckedState("customIconGroup", Strings.IconCustom); break;
             case "dynamic": UpdateDynamicIcon(); UpdateCheckedState("customIconGroup", Strings.IconDynamic); break;
           }
