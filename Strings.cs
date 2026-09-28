@@ -13,6 +13,11 @@
   /// 修改 Current 后立即对后续调用生效。
   /// </summary>
   public static class Strings {
+    public static string TemperatureLost => T("温度采集失效，已请求最大风扇保护。", "溫度擷取失效，已請求最大風扇保護。", "Temperature readings unavailable; maximum fan protection requested.");
+    public static string TemperatureRestored => T("温度采集已恢复。", "溫度擷取已恢復。", "Temperature readings recovered.");
+    public static string ReadingUnavailable => T("采集不可用", "擷取不可用", "Unavailable");
+    public static string UnknownPower => T("功耗未知", "功耗未知", "power unknown");
+    public static string EstimatedTemperature => T("估算", "估算", "estimated");
     public static AppLanguage Current = AppLanguage.SimplifiedChinese;
 
     public static string ProductUnsupported => T(
