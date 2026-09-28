@@ -13,14 +13,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Hp.Bridge.Client.SDKs.PerformanceControl.DataStructure;
-using HP.Omen.Core.Common.NVidiaApi;
 using HP.Omen.Core.Model.Device.Enums;
 using HP.Omen.Core.Model.Device.Models;
 using Microsoft.Win32;
-using NvAPIWrapper.GPU;
-using NvAPIWrapper.Native;
-using NvAPIWrapper.Native.GPU;
-using NvAPIWrapper.Native.GPU.Structures;
 using static HP.Omen.Core.Model.Device.Models.GraphicsSwitcherHelper;
 using static OmenSuperHub.GpuAppManager;
 using static OmenSuperHub.OmenHardware;
@@ -49,10 +44,8 @@ namespace OmenSuperHub {
     // 四分区/灯条 WMI 协议选择（默认 BasicFourZone；用户可在菜单中切换并持久化）
     static LightingControlInterface kbControlInterface = LightingControlInterface.BasicFourZone;
     static LightingControlInterface lbControlInterface = LightingControlInterface.Dojo;
-    static int DBVersion = 2, countDB = 0, countDBInit = 10, tryTimes = 0, maxRetry = 5, CPULimitDB = 20;
-    static ToolStripMenuItem performanceControlMenu;
     static int textSize = 40;
-    static int countRestore = 0, gpuClock = 0, gpuCoreOverclock = -1, gpuMemoryOverclock = -1, maxFrameRate = -1, graphicsBoostClock = 0;
+    static int countRestore = 0;
     static int alreadyRead = 0, alreadyReadCode = 1000;
     static readonly string[] PresetOrder = { "PresetExtreme", "PresetGpuPriority", "PresetLightUse", "PresetCustom1", "PresetCustom2", "PresetCustom3" };
     static string currentPreset = "PresetCustom1", presetCustom1Name = Strings.PresetCustom1, presetCustom2Name = Strings.PresetCustom2, presetCustom3Name = Strings.PresetCustom3;
@@ -95,8 +88,8 @@ namespace OmenSuperHub {
     static ToolStripMenuItem ambientSensorMenu;
     static ToolStripMenuItem pchSensorMenu;
     static ToolStripMenuItem vrSensorMenu;
-    static ToolStripTrackBar fanTrackBar, cpuPowerTrackBar, tppTrackBar, gpuCoreOverclockTrackBar, gpuMemoryOverclockTrackBar, gpuClockTrackBar, maxFrameRateTrackBar, textSizeTrackBar;
-    static ToolStripMenuItem fanValueLabel, cpuPowerValueLabel, tppValueLabel, gpuCoreOverclockValueLabel, gpuMemoryOverclockValueLabel, gpuClockValueLabel, maxFrameRateValueLabel, textSizeLabel;
+    static ToolStripTrackBar fanTrackBar, cpuPowerTrackBar, tppTrackBar, textSizeTrackBar;
+    static ToolStripMenuItem fanValueLabel, cpuPowerValueLabel, tppValueLabel, textSizeLabel;
 
     static bool Is3FanNb = false, isFanCleanSupported = false, isFanLegacyCleanSupported = false;
     static bool isSysInfoMenuOpen = false;
@@ -200,8 +193,6 @@ namespace OmenSuperHub {
           hasNVIDIAGpu = HasNvidiaGpu();
           if (hasNVIDIAGpu) {
             ExtractAndPreloadNativeDll("NvidiaApi.dll");
-            maxFrameRate = NvApiWrapper.NVAPI_GetMaxFrameRate();
-            graphicsBoostClock = GetGraphicsBoostClock();
           }
         });
         var t4 = Task.Run(() => kbType = GetKeyboardType());
@@ -625,8 +616,6 @@ namespace OmenSuperHub {
       }
     }
 
-
-    // 状态栏定时更新任务+硬件查询+DB解锁
     static void UpdateTooltip() {
       if (_isExiting) return;   // 退出期在途 Elapsed 回调直接丢弃
       try {
@@ -672,65 +661,6 @@ namespace OmenSuperHub {
         }
       }
 
-      // 启用再禁用DB驱动
-      if (countDB > 0) {
-        countDB--;
-        // 提前判断是否符合条件
-        if (CPUPower > 0 && CPUPower < CPULimitDB) {
-          float[] limits = GetGpuPowerLimits();   // limits[0] = Current, limits[1] = Max
-          if (!powerOnline || Math.Abs(limits[1] - limits[0]) < 1f)
-            countDB = 0;
-        }
-        if (tryTimes == 0)
-          performanceControlMenu.ToolTipText = Strings.UnavailableReasonTip(countDB + 1);
-        else
-          performanceControlMenu.ToolTipText = Strings.UnavailableRetryTip(countDB + 1, tryTimes, maxRetry);
-        if (countDB == 0) {
-          ChangeDBState(false);
-
-          float[] limits = GetGpuPowerLimits();   // limits[0] = Current, limits[1] = Max
-          // 检查显卡当前功耗限制，离电时当作解锁成功
-          if (powerOnline && Math.Abs(limits[1] - limits[0]) > 1f) {
-            tryTimes++;
-            // 失败时重试maxRetry次
-            if (tryTimes > maxRetry) {
-              tryTimes = 0;
-              if (CPUPower > CPULimitDB + 10)
-                MessageBox.Show(Application.OpenForms.OfType<HelpForm>().FirstOrDefault(), Strings.DbUnlockCpuHighWarning, Strings.Hint, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-              else
-                MessageBox.Show(Application.OpenForms.OfType<HelpForm>().FirstOrDefault(), Strings.DbUnlockFailed(limits[0]), Strings.Hint, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-              ChangeDBState(true);
-              DBVersion = 2;
-              countDB = 0;
-              performanceControlMenu.Enabled = true;
-              performanceControlMenu.ToolTipText = "";
-              SaveConfig("DBVersion");
-              UpdateCheckedState("DBGroup", Strings.DbNormal);
-            } else {
-              countDB = countDBInit;
-              // 启用DB驱动
-              ChangeDBState(true);
-              SetGpuPowerState(true, true);
-            }
-          } else {
-            tryTimes = 0;
-            performanceControlMenu.Enabled = true;
-            performanceControlMenu.ToolTipText = "";
-            if (autoStart == "off") {
-              MessageBox.Show(Application.OpenForms.OfType<HelpForm>().FirstOrDefault(), Strings.DbUnlockSuccessNoAutoStart, Strings.Hint, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-            //MessageBox.Show($"解锁成功！\n当前最大显卡功耗锁定为：{-powerLimits:F2} W ！", Strings.Hint, MessageBoxButtons.OK, MessageBoxIcon.Information);
-          }
-          if (tryTimes == 0) {
-            // 恢复CPU功耗设定
-            RestoreCPUPower();
-            // 恢复GPU功耗设定
-            SetGpuPowerState(tgpPower == "on", ppabPower == "on", dState == "normal" ? 1 : 2);
-          }
-        } else if (countDB == countDBInit - 1) {
-          if (isCPUPowerControlSupported) SetCpuPowerLimit((byte)CPULimitDB);
-        }
-      }
 
       // 从休眠中启动后恢复配置
       if (countRestore > 0) {

@@ -121,15 +121,6 @@
   <data name="fan" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\fan.ico;System.Drawing.Icon, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
-  <data name="nvpcf_cat" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>..\Resources\nvpcf_cat.CAT;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
-  </data>
-  <data name="nvpcf_inf" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>..\Resources\nvpcf_inf.inf;System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089;gb2312</value>
-  </data>
-  <data name="nvpcf_sys" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>..\Resources\nvpcf_sys.sys;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
-  </data>
   <data name="smallfan" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\smallfan.ico;System.Drawing.Icon, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>

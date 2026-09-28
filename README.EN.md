@@ -16,7 +16,9 @@
 
 About OmenSuperHub
 =
-OmenSuperHub is a utility that emulates OGH (Omen Gaming Hub) functionalities, including fan control, power management, automatic DB version switching, Omen key customization, and temperature/power monitoring.
+OmenSuperHub is a utility that emulates OGH (Omen Gaming Hub) functionalities, including fan control, power management, Omen key customization, and temperature/power monitoring.
+
+* Upgrade note: removing DB unlocking does not undo driver changes made by older versions. Reinstall the official NVIDIA graphics driver if you need to restore the default driver state.
 
 It implements most of the useful features of HP OMEN's official OGH software, **without** network connection, advertisements, wallpapers, or other unnecessary bloatware.
 

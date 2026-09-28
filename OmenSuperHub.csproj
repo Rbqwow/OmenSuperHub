@@ -352,12 +352,7 @@
     </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="Resources\nvpcf_cat.CAT" />
-    <EmbeddedResource Include="Resources\nvpcf_sys.sys" />
     <None Include="Resources\smallfan.ico" />
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="Resources\nvpcf_inf.inf" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resources\HP.Omen.Core.Api.dll" />
