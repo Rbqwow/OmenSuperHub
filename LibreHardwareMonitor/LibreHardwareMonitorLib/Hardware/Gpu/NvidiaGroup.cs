@@ -1,4 +1,4 @@
-﻿// This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+// This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 // If a copy of the MPL was not distributed with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 // Copyright (C) LibreHardwareMonitor and Contributors.
 // Partial Copyright (C) Michael Möller <mmoeller@openhardwaremonitor.org> and Contributors.
@@ -6,9 +6,8 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
+using System.Diagnostics;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using LibreHardwareMonitor.Interop;
@@ -17,205 +16,191 @@ namespace LibreHardwareMonitor.Hardware.Gpu;
 
 internal class NvidiaGroup : IGroup, IHardwareChanged
 {
-    private readonly Dictionary<NvApi.NvPhysicalGpuHandle, NvidiaGpu> _hardwareByHandle = new();
-    private readonly List<Hardware> _hardware = [];
-    private readonly StringBuilder _report = new();
+    private readonly Dictionary<NvApi.NvPhysicalGpuHandle, NvidiaGpu> _hardware = new();
     private readonly ISettings _settings;
-
-    private CancellationTokenSource _cancellationTokenSource;
-    private bool _disposed;
-    private Task _monitorTask;
-    private bool _nvidiaWasAvailable;
+    private readonly CancellationTokenSource _stop = new();
+    private readonly SemaphoreSlim _wake = new(0, 1);
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
+    private readonly TopologySchedule _schedule = new();
+    private readonly object _scheduleGate = new();
+    private readonly Task _monitorTask;
+    private volatile bool _disposed;
+    private int _rebuild, _resetNative;
+    private int _notificationThread;
+    private string _report = "NvAPI: waiting for topology";
 
     public NvidiaGroup(ISettings settings)
     {
         _settings = settings;
-
-        _report.AppendLine("NvApi");
-        _report.AppendLine();
-
-        if (Software.OperatingSystem.IsUnix)
-        {
-            _report.AppendLine("Status: Not supported on Unix for NvApi group");
-            _report.AppendLine();
-            return;
-        }
-
-        RefreshHardware(raiseEvents: false);
-        StartMonitorTask();
-    }
-
-    public event HardwareEventHandler HardwareAdded;
-
-    public event HardwareEventHandler HardwareRemoved;
-
-    public IReadOnlyList<IHardware> Hardware
-    {
-        get { return _hardware; }
-    }
-
-    public string GetReport() => _report.ToString();
-
-    public void Close()
-    {
-        _disposed = true;
-
-        _cancellationTokenSource?.Cancel();
-
+        NvidiaNative.Session.AddUser();
         try
         {
-            _monitorTask?.Wait(TimeSpan.FromSeconds(1));
+            Probe(false);
+            _monitorTask = Task.Run(MonitorLoop);
         }
-        catch (AggregateException)
+        catch
         {
-            // ignored
+            lock (NvidiaNative.Session.Gate)
+            {
+                try { RemoveAll(new List<NvidiaGpu>()); }
+                finally { NvidiaNative.Session.RemoveUser(); }
+            }
+            _stop.Dispose(); _wake.Dispose();
+            throw;
         }
-
-        _cancellationTokenSource?.Dispose();
-        _cancellationTokenSource = null;
-        _monitorTask = null;
-
-        var hardwareToClose = _hardware.ToList();
-
+    }
+    public event HardwareEventHandler HardwareAdded;
+    public event HardwareEventHandler HardwareRemoved;
+    public IReadOnlyList<IHardware> Hardware
+    {
+        get { lock (NvidiaNative.Session.Gate) return _hardware.Values.Cast<IHardware>().ToArray(); }
+    }
+    public string GetReport() { lock (NvidiaNative.Session.Gate) return _report; }
+    internal void RequestRefresh(bool resetNative = false)
+    {
+        lock (_scheduleGate)
+        {
+            if (_disposed) return;
+            Interlocked.Exchange(ref _rebuild, 1);
+            if (resetNative) Interlocked.Exchange(ref _resetNative, 1);
+            _schedule.Request(_clock.ElapsedMilliseconds);
+            if (_wake.CurrentCount == 0) _wake.Release();
+        }
+    }
+    private async Task MonitorLoop()
+    {
+        try
+        {
+            while (!_stop.IsCancellationRequested)
+            {
+                int delay;
+                lock (_scheduleGate) delay = (int)Math.Max(0, _schedule.Due - _clock.ElapsedMilliseconds);
+                if (delay > 0)
+                {
+                    await _wake.WaitAsync(delay, _stop.Token).ConfigureAwait(false);
+                    continue;
+                }
+                if (!_disposed)
+                {
+                    try { Probe(true); }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine(ex);
+                        lock (_scheduleGate) _schedule.Completed(_clock.ElapsedMilliseconds, false);
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+    private void Probe(bool raiseEvents)
+    {
+        var removed = new List<NvidiaGpu>();
+        var added = new List<NvidiaGpu>();
+        bool success = false;
+        lock (NvidiaNative.Session.Gate)
+        {
+            if (_disposed) return;
+            try
+            {
+                bool rebuild = Interlocked.Exchange(ref _rebuild, 0) != 0;
+                if (rebuild) RemoveAll(removed);
+                if (Interlocked.Exchange(ref _resetNative, 0) != 0) NvidiaNative.Session.Reset();
+                if (!Software.OperatingSystem.IsUnix && NvidiaNative.Session.EnsureInitialized())
+                {
+                    var handles = new NvApi.NvPhysicalGpuHandle[NvApi.MAX_PHYSICAL_GPUS];
+                    NvApi.NvStatus status = NvApi.NvAPI_EnumPhysicalGPUs(handles, out int count);
+                    success = status == NvApi.NvStatus.OK && count > 0;
+                    _report = $"NvAPI: {status}; GPUs: {count}";
+                    if (success)
+                    {
+                        var displays = GetDisplayHandles();
+                        var current = new HashSet<NvApi.NvPhysicalGpuHandle>(handles.Take(count));
+                        foreach (var pair in _hardware.ToArray())
+                            if (!current.Contains(pair.Key) || pair.Value.SessionGeneration != NvidiaNative.Session.Generation)
+                            {
+                                pair.Value.Close(); removed.Add(pair.Value); _hardware.Remove(pair.Key);
+                            }
+                        for (int i = 0; i < count; i++)
+                            if (!_hardware.ContainsKey(handles[i]))
+                            {
+                                displays.TryGetValue(handles[i], out var display);
+                                var gpu = new NvidiaGpu(i, handles[i], display, _settings, () => RequestRefresh(true),
+                                    () => _disposed || _stop.IsCancellationRequested);
+                                _hardware.Add(handles[i], gpu); added.Add(gpu);
+                            }
+                    }
+                    else if (status != NvApi.NvStatus.OK)
+                    {
+                        RemoveAll(removed);
+                        NvidiaNative.Session.Reset();
+                    }
+                }
+                if (!success) RemoveAll(removed);
+            }
+            catch (Exception ex)
+            {
+                success = false; RemoveAll(removed);
+                _report = "NvAPI topology failed: " + ex.GetType().Name;
+                try { NvidiaNative.Session.Reset(); } catch { }
+            }
+        }
+        lock (_scheduleGate)
+        {
+            _schedule.Completed(_clock.ElapsedMilliseconds, success);
+            if (Volatile.Read(ref _rebuild) != 0) _schedule.Request(_clock.ElapsedMilliseconds);
+        }
+        // No native/list lock while calling external handlers. Computer never waits for us under its list lock.
+        if (raiseEvents && !_disposed)
+        {
+            _notificationThread = Thread.CurrentThread.ManagedThreadId;
+            try
+            {
+                foreach (var gpu in removed)
+                {
+                    if (_disposed) break;
+                    try { HardwareRemoved?.Invoke(gpu); } catch (Exception ex) { Debug.WriteLine(ex); }
+                }
+                foreach (var gpu in added)
+                {
+                    if (_disposed) break;
+                    try { HardwareAdded?.Invoke(gpu); } catch (Exception ex) { Debug.WriteLine(ex); }
+                }
+            }
+            finally { _notificationThread = 0; }
+        }
+    }
+    private void RemoveAll(List<NvidiaGpu> removed)
+    {
+        foreach (var gpu in _hardware.Values) { gpu.Close(); removed.Add(gpu); }
         _hardware.Clear();
-        _hardwareByHandle.Clear();
-
-        foreach (Hardware gpu in hardwareToClose)
-            gpu.Close();
-
-        NvidiaML.Close();
+    }
+    public void Close()
+    {
+        lock (_scheduleGate)
+        {
+            if (_disposed) return;
+            _disposed = true; _stop.Cancel();
+        }
+        // Called by the application's background lifecycle. Never release a DLL still in use.
+        // A subscriber may close this group from its own notification. That callback is already
+        // outside native access, and the cancelled loop cannot start another probe after it returns.
+        if (Thread.CurrentThread.ManagedThreadId != Volatile.Read(ref _notificationThread))
+            _monitorTask?.GetAwaiter().GetResult();
+        lock (NvidiaNative.Session.Gate)
+        {
+            RemoveAll(new List<NvidiaGpu>());
+            NvidiaNative.Session.RemoveUser();
+        }
+        _stop.Dispose();
+        _wake.Dispose();
     }
 
-    private void StartMonitorTask()
+    internal void StopRefreshing()
     {
-        CancellationTokenSource cts = new();
-        _cancellationTokenSource = cts;
-
-        CancellationToken token = cts.Token;
-
-        _monitorTask = Task.Run(async () =>
-                                {
-                                    while (!token.IsCancellationRequested)
-                                    {
-                                        try
-                                        {
-                                            await Task.Delay(TimeSpan.FromSeconds(1), token).ConfigureAwait(false);
-                                        }
-                                        catch (TaskCanceledException)
-                                        {
-                                            break;
-                                        }
-
-                                        if (_disposed)
-                                        {
-                                            break;
-                                        }
-
-                                        RefreshHardware(raiseEvents: true);
-                                    }
-                                },
-                                token);
-    }
-
-    private void RefreshHardware(bool raiseEvents)
-    {
-        if (_disposed)
+        lock (_scheduleGate)
         {
-            return;
-        }
-
-        bool isAvailable = TryEnumerateGpus(out NvApi.NvPhysicalGpuHandle[] handles, out int count);
-
-        if (!isAvailable)
-        {
-            if (_nvidiaWasAvailable)
-            {
-                NvidiaML.Close();
-            }
-
-            _nvidiaWasAvailable = false;
-            RemoveAllHardware(raiseEvents);
-
-            return;
-        }
-
-        // Driver was unavailable and came back: force NVML re-init
-        if (!_nvidiaWasAvailable)
-        {
-            NvidiaML.Close();
-
-            if (NvApi.NvAPI_GetInterfaceVersionString(out string version) == NvApi.NvStatus.OK)
-            {
-                _report.Append("Version: ");
-                _report.AppendLine(version);
-            }
-
-            _report.Append("Number of GPUs: ");
-            _report.AppendLine(count.ToString(CultureInfo.InvariantCulture));
-            _report.AppendLine();
-        }
-
-        _nvidiaWasAvailable = true;
-
-        IDictionary<NvApi.NvPhysicalGpuHandle, NvApi.NvDisplayHandle> displayHandles = GetDisplayHandles();
-
-        HashSet<NvApi.NvPhysicalGpuHandle> currentSet = [.. handles.Take(count)];
-        List<Hardware> removed = [];
-
-        foreach (KeyValuePair<NvApi.NvPhysicalGpuHandle, NvidiaGpu> pair in _hardwareByHandle.ToList())
-        {
-            if (!currentSet.Contains(pair.Key))
-            {
-                _hardwareByHandle.Remove(pair.Key);
-                _hardware.Remove(pair.Value);
-                removed.Add(pair.Value);
-            }
-        }
-
-        for (int i = 0; i < count; ++i)
-        {
-            NvApi.NvPhysicalGpuHandle handle = handles[i];
-
-            if (_hardwareByHandle.ContainsKey(handle))
-                continue;
-
-            displayHandles.TryGetValue(handle, out NvApi.NvDisplayHandle displayHandle);
-
-            NvidiaGpu gpu = new(i, handle, displayHandle, _settings);
-            _hardwareByHandle.Add(handle, gpu);
-            _hardware.Add(gpu);
-
-            if (raiseEvents)
-                HardwareAdded?.Invoke(gpu);
-        }
-
-        foreach (Hardware gpu in removed)
-        {
-            if (raiseEvents)
-                HardwareRemoved?.Invoke(gpu);
-
-            gpu.Close();
-        }
-    }
-
-    private void RemoveAllHardware(bool raiseEvents)
-    {
-        if (_hardware.Count == 0)
-            return;
-
-        List<Hardware> removed = _hardware.ToList();
-
-        _hardware.Clear();
-        _hardwareByHandle.Clear();
-
-        foreach (Hardware gpu in removed)
-        {
-            if (raiseEvents)
-            {
-                HardwareRemoved?.Invoke(gpu);
-            }
-
-            gpu.Close();
+            if (!_disposed) _stop.Cancel();
         }
     }
 
@@ -260,19 +245,4 @@ internal class NvidiaGroup : IGroup, IHardwareChanged
         return displayHandles;
     }
 
-    private static bool TryEnumerateGpus(out NvApi.NvPhysicalGpuHandle[] handles, out int count)
-    {
-        handles = new NvApi.NvPhysicalGpuHandle[NvApi.MAX_PHYSICAL_GPUS];
-        count = 0;
-
-        NvApi.Initialize();
-
-        if (!NvApi.IsAvailable || NvApi.NvAPI_EnumPhysicalGPUs == null)
-        {
-            return false;
-        }
-
-        NvApi.NvStatus status = NvApi.NvAPI_EnumPhysicalGPUs(handles, out count);
-        return status == NvApi.NvStatus.OK && count > 0;
-    }
 }

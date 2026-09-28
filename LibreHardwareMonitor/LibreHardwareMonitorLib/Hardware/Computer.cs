@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using LibreHardwareMonitor.Hardware.Battery;
 using LibreHardwareMonitor.Hardware.Controller.AeroCool;
 using LibreHardwareMonitor.Hardware.Controller.AquaComputer;
@@ -36,6 +37,8 @@ namespace LibreHardwareMonitor.Hardware;
 public class Computer : IComputer
 {
     private readonly List<IGroup> _groups = new();
+    private NvidiaGroup[] _nvidiaGroups = Array.Empty<NvidiaGroup>();
+    private volatile bool _gpuRefreshStopped;
     private readonly object _lock = new();
     private readonly ISettings _settings;
 
@@ -159,9 +162,24 @@ public class Computer : IComputer
             if (_open && value != _cpuEnabled)
             {
                 if (value)
-                    Add(new CpuGroup(_settings));
+                {
+                    try
+                    {
+                        Add(new CpuGroup(_settings));
+                        if (_gpuEnabled) Add(new IntelGpuGroup(GetIntelCpus(), _settings));
+                    }
+                    catch
+                    {
+                        try { RemoveType<IntelGpuGroup>(); }
+                        finally { RemoveType<CpuGroup>(); }
+                        throw;
+                    }
+                }
                 else
+                {
+                    RemoveType<IntelGpuGroup>();
                     RemoveType<CpuGroup>();
+                }
             }
 
             _cpuEnabled = value;
@@ -178,10 +196,27 @@ public class Computer : IComputer
             {
                 if (value)
                 {
-                    Add(new NvidiaGroup(_settings));
+                    try
+                    {
+                        Add(new AmdGpuGroup(_settings));
+                        Add(new NvidiaGroup(_settings));
+                        if (_cpuEnabled) Add(new IntelGpuGroup(GetIntelCpus(), _settings));
+                    }
+                    catch
+                    {
+                        try { RemoveType<IntelGpuGroup>(); }
+                        finally
+                        {
+                            try { RemoveType<AmdGpuGroup>(); }
+                            finally { RemoveType<NvidiaGroup>(); }
+                        }
+                        throw;
+                    }
                 }
                 else
                 {
+                    RemoveType<IntelGpuGroup>();
+                    RemoveType<AmdGpuGroup>();
                     RemoveType<NvidiaGroup>();
                 }
             }
@@ -404,17 +439,21 @@ public class Computer : IComputer
     /// <param name="visitor">Observer who call to devices.</param>
     public void Traverse(IVisitor visitor)
     {
-        lock (_lock)
-        {
-            // Use a for-loop instead of foreach to avoid a collection modified exception after sleep, even though everything is under a lock.
-            for (int i = 0; i < _groups.Count; i++)
-            {
-                IGroup group = _groups[i];
+        foreach (IHardware hardware in Hardware) hardware.Accept(visitor);
+    }
 
-                for (int j = 0; j < group.Hardware.Count; j++)
-                    group.Hardware[j].Accept(visitor);
-            }
-        }
+    /// <summary>Coalesces a GPU topology refresh after resume, display/device changes or a driver restart.</summary>
+    public void RequestGpuRefresh()
+    {
+        if (_gpuRefreshStopped) return;
+        foreach (var group in Volatile.Read(ref _nvidiaGroups)) group.RequestRefresh();
+    }
+
+    /// <summary>Stops topology producers before waiting for active monitoring calls on shutdown.</summary>
+    public void StopGpuRefresh()
+    {
+        _gpuRefreshStopped = true;
+        foreach (var group in Volatile.Read(ref _nvidiaGroups)) group.StopRefreshing();
     }
 
     private void HardwareAddedEvent(IHardware hardware)
@@ -438,6 +477,11 @@ public class Computer : IComputer
                 return;
 
             _groups.Add(group);
+            if (group is NvidiaGroup nvidia)
+            {
+                Volatile.Write(ref _nvidiaGroups, _groups.OfType<NvidiaGroup>().ToArray());
+                if (_gpuRefreshStopped) nvidia.StopRefreshing();
+            }
 
             if (group is IHardwareChanged hardwareChanged)
             {
@@ -461,6 +505,7 @@ public class Computer : IComputer
                 return;
 
             _groups.Remove(group);
+            if (group is NvidiaGroup) Volatile.Write(ref _nvidiaGroups, _groups.OfType<NvidiaGroup>().ToArray());
 
             if (group is IHardwareChanged hardwareChanged)
             {
@@ -469,13 +514,12 @@ public class Computer : IComputer
             }
         }
 
-        if (HardwareRemoved != null)
+        try
         {
-            foreach (IHardware hardware in group.Hardware)
-                HardwareRemoved(hardware);
+            if (HardwareRemoved != null)
+                foreach (IHardware hardware in group.Hardware) HardwareRemoved(hardware);
         }
-
-        group.Close();
+        finally { group.Close(); }
     }
 
     private void RemoveType<T>() where T : IGroup
@@ -504,16 +548,25 @@ public class Computer : IComputer
         if (_open)
             return;
 
-        _smbios = new SMBios();
-
-        if (Software.OperatingSystem.IsWindows8OrGreater)
-            Mutexes.Open();
-
-        OpCode.Open();
-
-        AddGroups();
-
-        _open = true;
+        _gpuRefreshStopped = false;
+        try
+        {
+            _smbios = new SMBios();
+            if (Software.OperatingSystem.IsWindows8OrGreater) Mutexes.Open();
+            OpCode.Open();
+            _open = true;
+            AddGroups();
+        }
+        catch
+        {
+            // Roll back groups already added, including their topology producers, before allowing a retry.
+            try { RemoveGroups(); }
+            finally
+            {
+                OpCode.Close(); Mutexes.Close(); _smbios = null; _open = false;
+            }
+            throw;
+        }
     }
 
     private void AddGroups()
@@ -649,20 +702,14 @@ public class Computer : IComputer
         if (!_open)
             return;
 
-        lock (_lock)
+        try { RemoveGroups(); }
+        finally
         {
-            while (_groups.Count > 0)
-            {
-                IGroup group = _groups[_groups.Count - 1];
-                Remove(group);
-            }
+            OpCode.Close();
+            Mutexes.Close();
+            _smbios = null;
+            _open = false;
         }
-
-        OpCode.Close();
-        Mutexes.Close();
-
-        _smbios = null;
-        _open = false;
     }
 
     /// <summary>
@@ -679,14 +726,15 @@ public class Computer : IComputer
 
     private void RemoveGroups()
     {
-        lock (_lock)
+        IGroup[] groups;
+        lock (_lock) groups = _groups.ToArray();
+        List<Exception> errors = new();
+        foreach (IGroup group in groups)
         {
-            while (_groups.Count > 0)
-            {
-                IGroup group = _groups[_groups.Count - 1];
-                Remove(group);
-            }
+            try { Remove(group); }
+            catch (Exception ex) { errors.Add(ex); }
         }
+        if (errors.Count > 0) throw new AggregateException(errors);
     }
 
     private List<IntelCpu> GetIntelCpus()
