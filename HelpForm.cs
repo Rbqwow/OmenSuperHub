@@ -176,12 +176,7 @@ namespace OmenSuperHub {
 <p>(3) IccMax是CPU的最大电流限值；</p>
 <p>(4) AC Load Line通过调整CPU电压补偿负载下的电压降；</p>
 <p>(5) 显卡功耗=BTGP+CTGP+DB/Ppab，开启CTGP和DB才能获得最大GPU性能；</p>
-<p>(6) DB版本指设备管理器-NVIDIA Platform Controllers and Framework的驱动版本，解锁版本使用31.0.15.3730；</p>
-<p>(7) 点击“解锁版本”，程序会删除解锁版本之外的DB驱动并自动启用再禁用驱动完成解锁；</p>
-<p>(8) 系统重启后解锁会失效，使用解锁功能最好打开OSH开机自启；</p>
-<p>(9) 如果出现提示GPU功耗异常无法解锁，请尝试重新解锁；</p>
-<p>(10) 修改CPU功率会同时修改PL1与PL2；</p>
-<p>(11) 修改GPU频率限制能实现限制不同级别的功耗，注意该功能不是超频功能。</p>
+<p>(6) 修改CPU功率会同时修改PL1与PL2。</p>
 
 <h2>四. “硬件监控”菜单说明</h2>
 <p>(1) 可选择开启或关闭对应的监控信息，注意如果使用混合模式，在不使用GPU时应关闭GPU监控，否则可能会导致功耗增加。</p>
@@ -243,12 +238,7 @@ namespace OmenSuperHub {
 <p>(3) IccMax是CPU的最大電流限值；</p>
 <p>(4) AC Load Line透過調整CPU電壓補償負載下的電壓降；</p>
 <p>(5) 顯示卡功耗=BTGP+CTGP+DB/Ppab，開啟CTGP和DB才能獲得最大GPU效能；</p>
-<p>(6) DB版本指設備管理員-NVIDIA Platform Controllers and Framework的驅動版本，解鎖版本使用31.0.15.3730；</p>
-<p>(7) 點擊「解鎖版本」，程式會刪除解鎖版本之外的DB驅動並自動啟用再禁用驅動完成解鎖；</p>
-<p>(8) 系統重啟後解鎖會失效，使用解鎖功能最好開啟OSH開機自啟；</p>
-<p>(9) 若出現GPU功耗異常無法解鎖，請嘗試重新解鎖；</p>
-<p>(10) 修改CPU功率會同時修改PL1與PL2；</p>
-<p>(11) 修改GPU頻率限制能限制不同級別的功耗，注意該功能不是超頻功能。</p>
+<p>(6) 修改CPU功率會同時修改PL1與PL2。</p>
 
 <h2>四. 「硬體監控」選單說明</h2>
 <p>(1) 可選擇開啟或關閉對應的監控訊息，注意如果使用混合模式，在不使用GPU時應關閉GPU監控，否則可能會導致功耗增加。</p>
@@ -310,12 +300,7 @@ namespace OmenSuperHub {
 <p>(3) IccMax: maximum CPU current limit for the voltage regulator;</p>
 <p>(4) AC Load Line: load-line calibration adjusts CPU voltage to compensate voltage droop;</p>
 <p>(5) GPU TDP = BTGP + CTGP + DB/Ppab. Enable CTGP and DB for maximum GPU performance;</p>
-<p>(6) DB version refers to the driver under Device Manager → Software Devices → NVIDIA Platform Controllers. Unlocked version uses 31.0.15.3730;</p>
-<p>(7) Clicking Unlocked removes other DB drivers and toggles enable/disable to lock the current power state (40-series or older only);</p>
-<p>(8) The unlock resets on reboot — enable autostart if you use this feature;</p>
-<p>(9) If the GPU power limit anomaly message appears, retry the unlock;</p>
-<p>(10) CPU power changes set both PL1 and PL2;</p>
-<p>(11) GPU clock limit reduces max GPU frequency (not overclocking).</p>
+<p>(6) CPU power changes set both PL1 and PL2.</p>
 
 <h2>4. HW Monitor menu</h2>
 <p>(1) You can choose to enable or disable the corresponding monitoring information. Note that if you are using hybrid mode, you should disable GPU monitoring when the GPU is not in use; otherwise, power consumption may increase.</p>

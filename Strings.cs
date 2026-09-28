@@ -233,7 +233,6 @@
     public static string Disable => T("关闭", "關閉", "Disable");
     public static string Standard => T("标准", "標準", "Standard");
     public static string LowPower => T("低功耗", "低功耗", "Low Power");
-    public static string Unlimited => T("无限制", "無限制", "Unlimited");
 
     public static string IccMaxMenu => T("IccMax", "IccMax", "IccMax");
     public static string AcLoadLineMenu => T("AC Load Line", "AC Load Line", "AC Load Line");
@@ -242,45 +241,9 @@
     public static string CurrentSliderValueTemp => T("滑块值：{0}", "滑桿值：{0}", "Slider Value: {0}");
     public static string SetFanSpeedSlider => T("拖动滑块设置转速 (RPM)", "拖動滑桿設定轉速 (RPM)", "Drag slider to set speed (RPM)");
     public static string SetTppSlider => T("拖动滑块设置功率 (W)", "拖動滑桿設定功率 (W)", "Drag slider to set power (W)");
-    public static string SetGpuClockSlider => T("拖动滑块设置频率 (MHz)", "拖動滑桿設定頻率 (MHz)", "Drag slider to set clock (MHz)");
-    public static string SetMaxFrameRateSlider => T("拖动滑块设置最大帧率 (FPS)", "拖動滑桿設定最大幀率 (FPS)", "Drag slider to set max frame rate (FPS)");
     public static string PpabPowerMenu => T("PPab条件(Tpp)", "PPab條件(Tpp)", "PPab (Tpp)");
     public static string DStateSubMenu => T("dState", "dState", "dState");
-    public static string DbVersionMenu => T("DB版本", "DB版本", "DB Version");
-    public static string DbNormal => T("普通版本", "普通版本", "Normal DB");
-    public static string DbUnlocked => T("解锁版本", "解鎖版本", "Unlocked DB");
-    public static string GpuCoreOverclock => T("GPU核心超频", "GPU核心超頻", "GPU Core Overclock");
-    public static string GpuMemoryOverclock => T("GPU显存超频", "GPU顯存超頻", "GPU Memory Overclock");
-    public static string SetGpuCoreOverclockSlider =>
-        T("拖动滑块设置GPU核心超频 (MHz)", "拖曳滑桿設定GPU核心超頻 (MHz)", "Drag the slider to set the GPU core overclock (MHz).");
-    public static string SetGpuMemoryOverclockSlider =>
-        T("拖动滑块设置GPU显存超频 (MHz)", "拖曳滑桿設定GPU顯存超頻 (MHz)", "Drag the slider to set the GPU memory overclock (MHz).");
-    public static string GraphicsBoostClockTip(int offsetMHz) => T(
-        $"💡默认最大加速频率：{offsetMHz} MHz",
-        $"💡預設最大加速頻率：{offsetMHz} MHz",
-        $"💡 Default maximum boost frequency: {offsetMHz} MHz");
-    public static string GpuClockMenu => T("GPU频率限制", "GPU頻率限制", "GPU Clock Limit");
-    public static string MaxFrameRateMenu => T("最大帧率", "最大幀率", "Max Frame Rate");
 
-    // DB 解锁相关
-    public static string UnavailableReasonTip(int seconds) => T(
-        $"正在解锁DB，暂时禁用此菜单，剩余{seconds}秒。",
-        $"正在解鎖DB，暫時停用此選單，剩餘{seconds}秒。",
-        $"Unlocking the database; this menu is temporarily disabled. {seconds} seconds remaining.");
-    public static string UnavailableRetryTip(int seconds, int count, int maxRetry) => T(
-        $"正在第{count}/{maxRetry}次重试解锁DB，暂时禁用此菜单，剩余{seconds}秒。",
-        $"正在第{count}/{maxRetry}次重試解鎖DB，暫時停用此選單，剩餘{seconds}秒。",
-        $"Retrying to unlock the DB (attempt {count}/{maxRetry}); this menu is temporarily disabled. {seconds} seconds remaining.");
-    public static string DbUnlockCpuHighWarning => T("请在CPU低负载下解锁",
-        "請在CPU低負載下解鎖", "Please unlock under low CPU load.");
-    public static string DbUnlockFailed(float w) => T(
-        $"功耗异常，解锁失败，请重新尝试！\n当前显卡功耗限制为：{w:F2} W ！",
-        $"功耗異常，解鎖失敗，請重新嘗試！\n當前顯示卡功耗限制為：{w:F2} W！",
-        $"Power limit anomaly. Unlock failed. Current GPU power limit: {w:F2} W. Please retry.");
-    public static string DbUnlockSuccessNoAutoStart => T(
-        "解锁成功！但当前未设置开机自启，解锁后若重启电脑会导致功耗异常，需要重新解锁！",
-        "解鎖成功！但目前未設定開機自啟，重啟電腦後功耗將恢復限制，需重新解鎖！",
-        "Unlock successful! However, autostart is not enabled. Rebooting will reset the power limit and require re-unlocking.");
     public static string Hint => T("提示", "提示", "Info");
     public static string Warning => T("警告", "警告", "Warning");
     public static string Error => T("错误", "錯誤", "Error");
@@ -314,32 +277,6 @@
     public static string PerfDStateTip => T("💡选择低功耗将把GPU功率限制在一个较低水平。",
         "💡選擇低功耗將把GPU功率限制在一個較低水平。",
         "💡 Low power mode restricts GPU power to a lower level.");
-
-    public static string PerfMaxFrameRateTip => T("💡设置GPU将渲染的最大3D游戏或应用程序帧速率的最大帧速率，0即无限制",
-        "💡設置GPU將渲染的最大3D遊戲或應用程序幀速率的最大幀速率，0即無限制",
-        "💡 Sets the maximum frame rate for GPU rendering of 3D games or applications, 0 means no limit.");
-
-    public static string PerfDbTip => T("💡你的设备支持Ppab条件更改，请优先选择增大Ppab条件中的功率而不是更改DB版本，两者效果相同。",
-        "💡你的設備支援Ppab條件更改，請優先選擇增大Ppab條件中的功率而不是更改DB版本，兩者效果相同。",
-        "💡 Your device supports Ppab condition adjustment. Prefer increasing Ppab condition power over changing DB version — same effect.");
-
-    public static string PerfDbUnlockWarning => T("\n警告：一旦解锁DB，只能通过安装一次显卡驱动恢复到原始状态，确认继续吗？",
-        "\n警告：一旦解鎖DB，只能透過安裝一次顯示卡驅動恢復到原始狀態，確認繼續嗎？",
-        "\nWarning: Once DB is unlocked, you can only restore to original state by reinstalling graphics driver once. Continue?");
-
-    public static string PerfDbUnlockTooltip => T("解锁DB可以在CPU功率较高时避免GPU功率降低。",
-        "解鎖DB可以在CPU功率較高時避免GPU功率降低。",
-        "Unlocking DB prevents GPU power reduction when CPU power is high.");
-
-    public static string PerfDbNormalTooltip => T("该选项可以重新恢复系统分配功耗的状态，但若在不支持的显卡（例如50系）上解锁过则必须通过安装一次显卡驱动来完全恢复。",
-        "該選項可以重新恢復系統分配功耗的狀態，但若在不支援的顯示卡（例如50系）上解鎖過則必須透過安裝一次顯示卡驅動來完全恢復。",
-        "This option restores the system's default power allocation. If you previously unlocked on an unsupported GPU (e.g., 50 series), a driver reinstall is required for full recovery.");
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // DB 解锁相关对话框
-    // ─────────────────────────────────────────────────────────────────────────
-    public static string DbUnlockTitle => T("解锁DB", "解鎖DB", "Unlock DB");
-    public static string PleaseConnectAC => T("请连接交流电源", "請連接交流電源", "Please connect AC power");
 
     // ─────────────────────────────────────────────────────────────────────────
     // 浮窗字体大小
@@ -582,13 +519,6 @@
     public static string GpuPowerControlMenu => T("GPU功率控制", "GPU功率控制", "GPU Power Control");
 
     // ─────────────────────────────────────────────────────────────────────────
-    // DB 解锁 — 50 系不支持提示
-    // ─────────────────────────────────────────────────────────────────────────
-    public static string DbNo50Series => T("不支持英伟达50系及以后的显卡解锁DB！",
-        "不支援 NVIDIA 50 系列及以後的顯示卡解鎖 DB！",
-        "Unlocking DB is not supported for NVIDIA 50 series and later GPUs!");
-
-    // ─────────────────────────────────────────────────────────────────────────
     // 灯光控制菜单
     // ─────────────────────────────────────────────────────────────────────────
     public static string LightingControl => T("灯光控制", "燈光控制", "Lighting Control");
@@ -663,9 +593,6 @@
     // ─────────────────────────────────────────────────────────────────────────
     // GpuAppManager 相关
     // ─────────────────────────────────────────────────────────────────────────
-    public static string CheckDriverFailed => T("查询显卡驱动失败", "查詢顯示卡驅動失敗", "Failed to query graphics driver");
-    public static string DriverNotFound => T("无法找到 NVIDIA 显卡驱动版本", "無法找到 NVIDIA 顯示卡驅動版本", "Cannot find NVIDIA graphics driver version");
-    public static string DriverNotAllow => T("NVIDIA 显卡驱动版本≥537.42且<610.47才支持解锁DB！当前版本：", "NVIDIA 顯示卡驅動版本≥537.42且<610.47才支援解鎖DB！目前版本：", "Only NVIDIA graphics card driver versions ≥ 537.42 and < 610.47 support DB unlocking! Current version:");
     public static string DeviceNotFound => T("未找到描述包含 NVIDIA 的显示适配器！", "未找到描述包含 NVIDIA 的顯示卡！", "Display adapter containing 'NVIDIA' not found!");
     public static string RestartGPUSuccess => T("重启显卡成功！", "重啟顯示卡成功！", "Restart GPU successful!");
     public static string RestartGPUFailed => T("重启显卡失败！", "重啟顯示卡失敗！", "Failed to restart GPU!");

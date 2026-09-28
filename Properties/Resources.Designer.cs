@@ -71,56 +71,6 @@ namespace OmenSuperHub.Properties {
         }
         
         /// <summary>
-        ///   查找 System.Byte[] 类型的本地化资源。
-        /// </summary>
-        internal static byte[] nvpcf_cat {
-            get {
-                object obj = ResourceManager.GetObject("nvpcf_cat", resourceCulture);
-                return ((byte[])(obj));
-            }
-        }
-        
-        /// <summary>
-        ///   查找类似 ; Installation file for the NVIDIA Platform Controllers and Framework
-        ///; Copyright (c) NVIDIA Corporation
-        ///;
-        ///
-        ///[Version]
-        ///Signature   = &quot;$WINDOWS NT$&quot;
-        ///Provider    = NVIDIA
-        ///ClassGUID   = {62F9C741-B25A-46CE-B54C-9BCCCE08B6F2}
-        ///Class       = SoftwareDevice
-        ///DriverVer   = 08/28/2023, 31.0.15.3730
-        ///CatalogFile = nvpcf.CAT
-        ///
-        ///[DestinationDirs]
-        ///DefaultDestDir = 12
-        ///nvpcf_Device_CoInstaller_CopyFiles = 11
-        ///
-        ///; ================= Class section =====================
-        ///
-        ///[SourceDisksNames]
-        ///1 = %DiskName%,,,&quot;&quot;
-        ///
-        ///[ [字符串的其余部分被截断]&quot;; 的本地化字符串。
-        /// </summary>
-        internal static string nvpcf_inf {
-            get {
-                return ResourceManager.GetString("nvpcf_inf", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   查找 System.Byte[] 类型的本地化资源。
-        /// </summary>
-        internal static byte[] nvpcf_sys {
-            get {
-                object obj = ResourceManager.GetObject("nvpcf_sys", resourceCulture);
-                return ((byte[])(obj));
-            }
-        }
-        
-        /// <summary>
         ///   查找类似于 (图标) 的 System.Drawing.Icon 类型的本地化资源。
         /// </summary>
         internal static System.Drawing.Icon smallfan {
