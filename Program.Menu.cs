@@ -1,4 +1,5 @@
 ﻿using System;
+using OmenSuperHub.Control;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -57,10 +58,13 @@ namespace OmenSuperHub {
       tooltipUpdateTimer = new System.Timers.Timer(1000); // Set interval to 1 second (low, default)
       tooltipUpdateTimer.Elapsed += (s, e) => UpdateTooltip();
       tooltipUpdateTimer.AutoReset = true; // Ensure the timer keeps running
-      tooltipUpdateTimer.Start();
+
     }
 
     static void BuildTrayMenu(ContextMenuStrip menu) {
+      isSysInfoMenuOpen = false;
+      Interlocked.Increment(ref sysInfoSession);
+      foreach (ToolStripItem oldItem in menu.Items.Cast<ToolStripItem>().ToArray()) oldItem.Dispose();
       menu.Items.Clear();
 
       menu.Closing -= TrayMenu_Closing;
@@ -74,11 +78,11 @@ namespace OmenSuperHub {
       sysInfoMenu.DropDownItems.Add(new ToolStripMenuItem($"{Strings.SysBiosVersion}: {biosVersion}") { Enabled = false });
 
       ToolStripMenuItem pawnIOStateMenu = null;
-      pawnIOStateMenu = new ToolStripMenuItem($"{Strings.SysPawnIOState}: ") { Enabled = false };
+      pawnIOStateMenu = new ToolStripMenuItem($"{Strings.SysPawnIOState}: {pawnIOState}") { Enabled = false };
       sysInfoMenu.DropDownItems.Add(pawnIOStateMenu);
 
       // CPU 完整型号
-      string cpuModel = GetCpuModel();
+      string cpuModel = cachedCpuModel;
       sysInfoMenu.DropDownItems.Add(new ToolStripMenuItem($"{Strings.SysCpu}: {cpuModel}") { Enabled = false });
       if (maxCPUTemp.HasValue) {
         sysInfoMenu.DropDownItems.Add(new ToolStripMenuItem($"{Strings.SysCpuTjMax}: {maxCPUTemp.Value}°C") { Enabled = false });
@@ -86,23 +90,14 @@ namespace OmenSuperHub {
 
       ToolStripMenuItem gpuModelMenu = null, gpuPowerLimitsMenu = null;
       if (hasNVIDIAGpu) {
-        gpuModelMenu = new ToolStripMenuItem("GPU: ") { Enabled = false };
+        gpuModelMenu = new ToolStripMenuItem("GPU: " + cachedGpuModel) { Enabled = false };
         sysInfoMenu.DropDownItems.Add(gpuModelMenu);
         if (maxGPUTemp.HasValue) {
           sysInfoMenu.DropDownItems.Add(new ToolStripMenuItem($"{Strings.SysNvidiaTjMax}: {maxGPUTemp.Value}°C") { Enabled = false });
         }
         gpuPowerLimitsMenu = new ToolStripMenuItem($"{Strings.SysNvidiaPower}: --W / --W") { Enabled = false };
         sysInfoMenu.DropDownItems.Add(gpuPowerLimitsMenu);
-        System.Threading.Tasks.Task.Run(() => {
-          string gpuModel = GetGpuModelFromNvidiaSmi();
-          var limits = GetGpuPowerLimits();
-          string limitsText = limits[0] == -2f ? "--W / --W" : $"{limits[0]:F0}W / {limits[1]:F0}W";
-          Thread.Sleep(2000);
-          uiContext.Post(_ => {
-            gpuPowerLimitsMenu.Text = $"{Strings.SysNvidiaPower}: {limitsText}";
-            gpuModelMenu.Text = "GPU: " + gpuModel;
-          }, null);
-        });
+        gpuLimitsItem = gpuPowerLimitsMenu;
       }
       irSensorMenu = new ToolStripMenuItem($"{Strings.SysIRSensor}: --°C") { Enabled = false };
       ambientSensorMenu = new ToolStripMenuItem($"{Strings.SysAmbient}: --°C") { Enabled = false };
@@ -113,53 +108,18 @@ namespace OmenSuperHub {
       sysInfoMenu.DropDownItems.Add(pchSensorMenu);
       sysInfoMenu.DropDownItems.Add(vrSensorMenu);
       ToolStripMenuItem adapterPowerMenu = null;
-      adapterPowerMenu = new ToolStripMenuItem($"{Strings.SysAdapterPower}: ") { Enabled = false };
+      adapterPowerMenu = new ToolStripMenuItem($"{Strings.SysAdapterPower}: {cachedAdapterPower}W") { Enabled = false };
       sysInfoMenu.DropDownItems.Add(adapterPowerMenu);
 
-      System.Threading.Tasks.Task.Run(() => {
-        // PawnIO信息
-        if (!IsPawnIOInstalled())
-          pawnIOState = Strings.SysPawnIONotInstalled;
-        else
-          pawnIOState = GetPawnIOState();
-        int adapterPower = GetAdapterPower();
-        Thread.Sleep(2000);
-        uiContext.Post(_ => {
-          pawnIOStateMenu.Text = $"{Strings.SysPawnIOState}: {pawnIOState}";
-          adapterPowerMenu.Text = $"{Strings.SysAdapterPower}: {adapterPower}W";
-        }, null);
-      });
-
-      // 订阅 DropDownOpening 和 DropDownClosed 事件来控制是否更新信息
       sysInfoMenu.DropDownOpening += (s, e) => {
-        if (hasNVIDIAGpu) {
-          System.Threading.Tasks.Task.Run(() => {
-            var limits = GetGpuPowerLimits();
-            string limitsText = limits[0] == -2f ? "--W / --W" : $"{limits[0]:F0}W / {limits[1]:F0}W";
-            // 更新 UI（必须在 UI 线程）
-            menu.BeginInvoke(new Action(() => {
-              gpuPowerLimitsMenu.Text = $"{Strings.SysNvidiaPower}: {limitsText}";
-            }));
-          });
-        }
-
-        System.Threading.Tasks.Task.Run(() => {
-          int irTemp = GetSensorTemperature(0);
-          int ambientTemp = GetSensorTemperature(1);
-          int pchTemp = GetSensorTemperature(2);
-          int vrTemp = GetSensorTemperature(3);
-          // 更新 UI（必须在 UI 线程）
-          menu.BeginInvoke(new Action(() => {
-            if (irSensorMenu != null) irSensorMenu.Text = $"{Strings.SysIRSensor}: {FormatSensorTemperature(irTemp)}";
-            if (ambientSensorMenu != null) ambientSensorMenu.Text = $"{Strings.SysAmbient}: {FormatSensorTemperature(ambientTemp)}";
-            if (pchSensorMenu != null) pchSensorMenu.Text = $"{Strings.SysPCH}: {FormatSensorTemperature(pchTemp)}";
-            if (vrSensorMenu != null) vrSensorMenu.Text = $"{Strings.SysVR}: {FormatSensorTemperature(vrTemp)}";
-          }));
-        });
-
+        Interlocked.Increment(ref sysInfoSession);
         isSysInfoMenuOpen = true;
+        RequestExtraInfo();
       };
-      sysInfoMenu.DropDownClosed += (s, e) => { isSysInfoMenuOpen = false; };
+      sysInfoMenu.DropDownClosed += (s, e) => {
+        isSysInfoMenuOpen = false;
+        Interlocked.Increment(ref sysInfoSession);
+      };
 
       menu.Items.Add(sysInfoMenu);
       menu.Items.Add(new ToolStripSeparator());
@@ -256,7 +216,7 @@ namespace OmenSuperHub {
         if (e.Button == MouseButtons.Left) {
           fanTable = "silent";
           LoadFanConfig("silent.txt");
-          SaveConfig("FanTable");
+          UserSettingChanged("FanTable");
           UpdateCheckedState("fanTableGroup", null, silentFanItem);
         } else if (e.Button == MouseButtons.Right) {
           ShowFanCurveEditor("silent.txt");
@@ -272,7 +232,7 @@ namespace OmenSuperHub {
         if (e.Button == MouseButtons.Left) {
           fanTable = "cool";
           LoadFanConfig("cool.txt");
-          SaveConfig("FanTable");
+          UserSettingChanged("FanTable");
           UpdateCheckedState("fanTableGroup", null, coolFanItem);
         } else if (e.Button == MouseButtons.Right) {
           ShowFanCurveEditor("cool.txt");
@@ -298,22 +258,22 @@ namespace OmenSuperHub {
       respondSpeedMenu.DropDownItems.Add(CreateMenuItem(Strings.FanRespRealtime, "tempSensitivityGroup", (s, e) => {
         tempSensitivity = "realtime";
         respondSpeed = 1;
-        SaveConfig("TempSensitivity");
+        UserSettingChanged("TempSensitivity");
       }, false));
       respondSpeedMenu.DropDownItems.Add(CreateMenuItem(Strings.FanRespHigh, "tempSensitivityGroup", (s, e) => {
         tempSensitivity = "high";
         respondSpeed = 0.4f;
-        SaveConfig("TempSensitivity");
+        UserSettingChanged("TempSensitivity");
       }, true));
       respondSpeedMenu.DropDownItems.Add(CreateMenuItem(Strings.FanRespMedium, "tempSensitivityGroup", (s, e) => {
         tempSensitivity = "medium";
         respondSpeed = 0.1f;
-        SaveConfig("TempSensitivity");
+        UserSettingChanged("TempSensitivity");
       }, false));
       respondSpeedMenu.DropDownItems.Add(CreateMenuItem(Strings.FanRespLow, "tempSensitivityGroup", (s, e) => {
         tempSensitivity = "low";
         respondSpeed = 0.04f;
-        SaveConfig("TempSensitivity");
+        UserSettingChanged("TempSensitivity");
       }, false));
       fanConfigMenu.DropDownItems.Add(respondSpeedMenu);
 
@@ -322,63 +282,38 @@ namespace OmenSuperHub {
       autoFanProtectMenu.DropDownItems.Add(new ToolStripMenuItem(Strings.FanAutoProtectNote) { Enabled = false });
       autoFanProtectMenu.DropDownItems.Add(CreateMenuItem(Strings.FanAutoProtectOn, "autoFanProtectGroup", (s, e) => {
         autoFanProtect = "on";
-        SaveConfig("AutoFanProtect");
+        UserSettingChanged("AutoFanProtect");
       }, autoFanProtect == "on"));
       autoFanProtectMenu.DropDownItems.Add(CreateMenuItem(Strings.FanAutoProtectOff, "autoFanProtectGroup", (s, e) => {
         autoFanProtect = "off";
-        SaveConfig("AutoFanProtect");
+        UserSettingChanged("AutoFanProtect");
       }, autoFanProtect == "off"));
       fanConfigMenu.DropDownItems.Add(autoFanProtectMenu);
 
       menu.Items.Add(fanConfigMenu);
 
       ToolStripMenuItem fanControlMenu = new ToolStripMenuItem(Strings.FanControl);
-      if (isFanCleanSupported || isFanLegacyCleanSupported) {
+      if ((isFanCleanSupported && platformSettings != null) || isFanLegacyCleanSupported) {
         string menuText = Strings.CleanCreekMenuItem;
-        if (!isFanCleanSupported && isFanLegacyCleanSupported)
+        if ((!isFanCleanSupported || platformSettings == null) && isFanLegacyCleanSupported)
           menuText = Strings.CleanCreekLegacyMenuItem;
         fanControlMenu.DropDownItems.Add(CreateMenuItem(menuText, null, (s, e) => {
           if (MessageBox.Show(Application.OpenForms.OfType<HelpForm>().FirstOrDefault(), Strings.CleanCreekConfirmMessage, Strings.CleanCreekTitle, MessageBoxButtons.OKCancel, MessageBoxIcon.Information) == DialogResult.OK) {
-            fanControlMenu.Enabled = false;
-            if (isFanCleanSupported) {
-              SetMaxFanSpeedOff();
-              fanControlTimer.Change(Timeout.Infinite, Timeout.Infinite);
-              // 准备开始清洁
-              Action start = () => {
-                SetFanLevel(platformSettings.CleanCreekCpuFanSpeed, platformSettings.CleanCreekGpuFanSpeed, Is3FanNb, true);
-              };
-              Action stop = () => {
-                fanControlMenu.Enabled = true;
-                RestoreFanControl();  // 恢复原始转速或自动控制
-              };
-              // 显示进度窗体，持续时间从配置读取（单位毫秒）
-              StartCleanCreekWithProgress(platformSettings.CleanCreekDuration, Strings.CleanCreekTitle, start, stop);
-            } else if (isFanLegacyCleanSupported) {
-              SetMaxFanSpeedOff();
-              fanControlTimer.Change(Timeout.Infinite, Timeout.Infinite);
-              Action start = () => SetLegacyCleanCreek(true);
-              Action stop = () => {
-                fanControlMenu.Enabled = true;
-                SetLegacyCleanCreek(false);
-                RestoreFanControl();
-              };
-              StartCleanCreekWithProgress(platformSettings.CleanCreekDuration, Strings.CleanCreekTitle, start, stop);
-            }
+            StartCleanCreekWithProgress(platformSettings?.CleanCreekDuration ?? 30000, Strings.CleanCreekTitle,
+              () => SetCleaning(isFanCleanSupported && platformSettings != null ? "clean" : "legacy"), () => SetCleaning(null));
           }
         }, false));
         fanControlMenu.DropDownItems.Add(new ToolStripSeparator());
       }
       fanControlMenu.DropDownItems.Add(CreateMenuItem(Strings.FanAuto, "fanControlGroup", (s, e) => {
         fanControl = "auto";
-        SetMaxFanSpeedOff();
-        fanControlTimer.Change(0, 1000);
-        SaveConfig("FanControl");
+
+        UserSettingChanged("FanControl");
       }, true));
       fanControlMenu.DropDownItems.Add(CreateMenuItem(Strings.FanMax, "fanControlGroup", (s, e) => {
         fanControl = "max";
-        SetMaxFanSpeedOn();
-        fanControlTimer.Change(Timeout.Infinite, Timeout.Infinite);
-        SaveConfig("FanControl");
+
+        UserSettingChanged("FanControl");
       }, false));
       fanControlMenu.DropDownItems.Add(CreateMenuItem(Strings.SetFanSpeedSlider, "fanControlGroup", (s, e) => { }, false));
       fanTrackBar = new ToolStripTrackBar();
@@ -391,23 +326,25 @@ namespace OmenSuperHub {
       fanValueLabel = new ToolStripMenuItem(string.Format(Strings.CurrentSliderValueTemp, $"{fanTrackBar.Value * 100} RPM")) { Enabled = false };
 
       fanTrackBar.ValueChanged += (sender, e) => {
+          if (uiUpdates.Active) return;
         fanControl = fanTrackBar.Value * 100 + " RPM";
         fanValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{fanTrackBar.Value * 100} RPM");
-        fanControlTimer.Change(Timeout.Infinite, Timeout.Infinite);
-        SetFanLevel((byte)fanTrackBar.Value, (byte)fanTrackBar.Value, Is3FanNb);
-        SaveConfig("FanControl");
+
+        UserSettingChanged("FanControl", CommandKind.FanSpeed);
         UpdateCheckedState("fanControlGroup", Strings.SetFanSpeedSlider);
       };
 
       fanTrackBar.MouseDown += (sender, e) => {
-        SetMaxFanSpeedOff();
-        fanControlTimer.Change(Timeout.Infinite, Timeout.Infinite);
-        SetFanLevel((byte)fanTrackBar.Value, (byte)fanTrackBar.Value, Is3FanNb);
+        fanControl = fanTrackBar.Value * 100 + " RPM";
+        UserSettingChanged("FanControl", CommandKind.FanSpeed);
+
         UpdateCheckedState("fanControlGroup", Strings.SetFanSpeedSlider);
       };
 
       fanTrackBar.MouseUp += (sender, e) => {
-        SaveConfig("FanControl");
+          if (uiUpdates.Active) return;
+        UserSettingChanged("FanControl");
+          hardwareDispatcher.Flush();
       };
 
       fanControlMenu.DropDownItems.Add(fanTrackBar);
@@ -428,7 +365,7 @@ namespace OmenSuperHub {
       }
       ToolStripMenuItem graphicsModeControlMenu = null;
       if (hasNVIDIAGpu) {
-        byte supportedGfxModes = GetSupportedGfxModes();
+        byte supportedGfxModes = cachedGfxModes;
 
         if (supportedGfxModes != 0) {
           graphicsModeControlMenu = new ToolStripMenuItem(Strings.GraphicsMode);
@@ -527,7 +464,7 @@ namespace OmenSuperHub {
         restartGpuMenu.ToolTipText = Strings.GpuRestartTooltip;
         restartGpuMenu.Click += (s, e) => {
           if (MessageBox.Show(Application.OpenForms.OfType<HelpForm>().FirstOrDefault(), Strings.GpuRestartConfirm, Strings.GpuRestartTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes) {
-            Task.Run(() => RestartGpu());
+            Task.Run(() => { RestartGpu(); libreComputer.RequestGpuRefresh(); });
           }
         };
         performanceControlMenu.DropDownItems.Add(restartGpuMenu);
@@ -565,32 +502,32 @@ namespace OmenSuperHub {
         ToolStripMenuItem iccMaxMenu = new ToolStripMenuItem(Strings.IccMaxMenu);
         iccMaxMenu.DropDownItems.Add(CreateMenuItem(Strings.NotSet, "iccMaxGroup", (s, e) => {
           iccMax = "null";
-          SaveConfig("IccMax");
+          UserSettingChanged("IccMax");
         }, true));
         for (int ampere = 150; ampere <= 350; ampere += 20) {
           int currentAmpere = ampere;
           iccMaxMenu.DropDownItems.Add(CreateMenuItem(currentAmpere + " A", "iccMaxGroup", (s, e) => {
             iccMax = currentAmpere + " A";
-            SetIccMaxByWmi((decimal)currentAmpere);
-            SaveConfig("IccMax");
+
+            UserSettingChanged("IccMax");
           }, false));
         }
         performanceControlMenu.DropDownItems.Add(iccMaxMenu);
       }
-      if (IsLoadLineSupported()) {
+      if (cachedLoadLineSupported) {
         ToolStripMenuItem acLoadLineMenu = new ToolStripMenuItem(Strings.AcLoadLineMenu);
         acLoadLineMenu.DropDownItems.Add(CreateMenuItem(Strings.NotSet, "acLoadLineGroup", (s, e) => {
           acLoadline = "null";
-          SaveConfig("AcLoadLine");
+          UserSettingChanged("AcLoadLine");
         }, true));
-        int maxSupportedLevel = GetLoadLineSupportLevels();
+        int maxSupportedLevel = cachedLoadLineLevels;
         for (int level = 1; level <= maxSupportedLevel; level++) {
           int currentLevel = level;
           string displayText = (180 - 10 * currentLevel).ToString();
           acLoadLineMenu.DropDownItems.Add(CreateMenuItem(displayText, "acLoadLineGroup", (s, e) => {
             acLoadline = currentLevel.ToString();
-            SetLoadLine(currentLevel);
-            SaveConfig("AcLoadLine");
+
+            UserSettingChanged("AcLoadLine");
           }, false));
         }
         performanceControlMenu.DropDownItems.Add(acLoadLineMenu);
@@ -603,7 +540,7 @@ namespace OmenSuperHub {
         cpuPowerMenu.DropDownItems.Add(new ToolStripSeparator());
         cpuPowerMenu.DropDownItems.Add(CreateMenuItem(Strings.NotSet, "cpuPowerGroup", (s, e) => {
           cpuPower = "null";
-          SaveConfig("CpuPower");
+          UserSettingChanged("CpuPower");
         }, true));
         // 添加提示（只读）
         ToolStripMenuItem cpuPowerSliderItem = CreateMenuItem(Strings.SetCpuPowerSlider, "cpuPowerGroup", (s, e) => { }, false);
@@ -626,22 +563,23 @@ namespace OmenSuperHub {
 
         // 滑块值改变时更新标签并应用设置
         cpuPowerTrackBar.ValueChanged += (sender, e) => {
+          if (uiUpdates.Active) return;
           int val = cpuPowerTrackBar.Value;
           cpuPowerValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} W");
           cpuPower = cpuPowerTrackBar.Value + " W";
-          if (isCPUPowerControlSupported)
-            SetCpuPowerLimit((byte)cpuPowerTrackBar.Value);
-          SaveConfig("CpuPower");
+
+          UserSettingChanged("CpuPower", CommandKind.CpuPower);
           UpdateCheckedState("cpuPowerGroup", Strings.SetCpuPowerSlider);
         };
 
         // 鼠标松开
         cpuPowerTrackBar.MouseUp += (sender, e) => {
+          if (uiUpdates.Active) return;
           cpuPower = cpuPowerTrackBar.Value + " W";
-          if (isCPUPowerControlSupported)
-            SetCpuPowerLimit((byte)cpuPowerTrackBar.Value);
-          SaveConfig("CpuPower");
+
+          UserSettingChanged("CpuPower");
           UpdateCheckedState("cpuPowerGroup", Strings.SetCpuPowerSlider);
+          hardwareDispatcher.Flush();
         };
 
         cpuPowerMenu.DropDownItems.Add(cpuPowerTrackBar);
@@ -656,13 +594,13 @@ namespace OmenSuperHub {
       tgpMenu.DropDownItems.Add(new ToolStripSeparator());
       tgpMenu.DropDownItems.Add(CreateMenuItem(Strings.Enable, "tgpPowerGroup", (s, e) => {
         tgpPower = "on";
-        SetGpuPowerState(true, ppabPower == "on", dState == "normal" ? 1 : 2);
-        SaveConfig("TgpPower");
+
+        UserSettingChanged("TgpPower");
       }, true));
       tgpMenu.DropDownItems.Add(CreateMenuItem(Strings.Disable, "tgpPowerGroup", (s, e) => {
         tgpPower = "off";
-        SetGpuPowerState(false, ppabPower == "on", dState == "normal" ? 1 : 2);
-        SaveConfig("TgpPower");
+
+        UserSettingChanged("TgpPower");
       }, false));
       gpuPowerMenu.DropDownItems.Add(tgpMenu);
 
@@ -671,13 +609,13 @@ namespace OmenSuperHub {
       ppabMenu.DropDownItems.Add(new ToolStripSeparator());
       ppabMenu.DropDownItems.Add(CreateMenuItem(Strings.Enable, "ppabPowerGroup", (s, e) => {
         ppabPower = "on";
-        SetGpuPowerState(tgpPower == "on", true, dState == "normal" ? 1 : 2);
-        SaveConfig("PpabPower");
+
+        UserSettingChanged("PpabPower");
       }, true));
       ppabMenu.DropDownItems.Add(CreateMenuItem(Strings.Disable, "ppabPowerGroup", (s, e) => {
         ppabPower = "off";
-        SetGpuPowerState(tgpPower == "on", false, dState == "normal" ? 1 : 2);
-        SaveConfig("PpabPower");
+
+        UserSettingChanged("PpabPower");
       }, false));
       gpuPowerMenu.DropDownItems.Add(ppabMenu);
 
@@ -687,7 +625,7 @@ namespace OmenSuperHub {
         tppMenu.DropDownItems.Add(new ToolStripSeparator());
         tppMenu.DropDownItems.Add(CreateMenuItem(Strings.NotSet, "tppPowerGroup", (s, e) => {
           tppPower = "null";
-          SaveConfig("TppPower");
+          UserSettingChanged("TppPower");
         }, true));
         tppMenu.DropDownItems.Add(CreateMenuItem(Strings.SetTppSlider, "tppPowerGroup", (s, e) => { }, false));
         tppTrackBar = new ToolStripTrackBar();
@@ -700,18 +638,21 @@ namespace OmenSuperHub {
         tppValueLabel = new ToolStripMenuItem(string.Format(Strings.CurrentSliderValueTemp, $"{tppTrackBar.Value} W")) { Enabled = false };
 
         tppTrackBar.ValueChanged += (sender, e) => {
+          if (uiUpdates.Active) return;
           tppValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{tppTrackBar.Value} W");
           tppPower = tppTrackBar.Value + " W";
-          SetConcurrentTdp((byte)tppTrackBar.Value);
-          SaveConfig("TppPower");
+
+          UserSettingChanged("TppPower", CommandKind.Tpp);
           UpdateCheckedState("tppPowerGroup", Strings.SetTppSlider);
         };
 
         tppTrackBar.MouseUp += (sender, e) => {
+          if (uiUpdates.Active) return;
           tppPower = tppTrackBar.Value + " W";
-          SetConcurrentTdp((byte)tppTrackBar.Value);
-          SaveConfig("TppPower");
+
+          UserSettingChanged("TppPower");
           UpdateCheckedState("tppPowerGroup", Strings.SetTppSlider);
+          hardwareDispatcher.Flush();
         };
 
         tppMenu.DropDownItems.Add(tppTrackBar);
@@ -724,13 +665,13 @@ namespace OmenSuperHub {
       dStateMenu.DropDownItems.Add(new ToolStripSeparator());
       dStateMenu.DropDownItems.Add(CreateMenuItem(Strings.Standard, "dStateGroup", (s, e) => {
         dState = "normal";
-        SetGpuPowerState(tgpPower == "on", ppabPower == "on", 1);
-        SaveConfig("DState");
+
+        UserSettingChanged("DState");
       }, true));
       dStateMenu.DropDownItems.Add(CreateMenuItem(Strings.LowPower, "dStateGroup", (s, e) => {
         dState = "low";
-        SetGpuPowerState(tgpPower == "on", ppabPower == "on", 2);
-        SaveConfig("DState");
+
+        UserSettingChanged("DState");
       }, false));
       gpuPowerMenu.DropDownItems.Add(dStateMenu);
 
@@ -758,10 +699,10 @@ namespace OmenSuperHub {
       monitorCPUMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorCpuOn, "monitorCPUGroup", (s, e) => {
         monitorCPU = true;
         cpuTempReady = false; // 等待获取到温度后再参与风扇控制
-        rawPowerCPU = 0f;     // 清除可能残留的脏功率值
+
         CPUPower = 0f;
-        SetCpuMonitorState(true);
-        SaveConfig("MonitorCPU");
+
+        UserSettingChanged("MonitorCPU");
       }, true));
       monitorCPUMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorCpuOff, "monitorCPUGroup", (s, e) => {
         // 自动转速模式下禁止彻底关闭监控
@@ -773,10 +714,10 @@ namespace OmenSuperHub {
         }
         monitorCPU = false;
         cpuTempReady = false;
-        rawPowerCPU = 0f;  // 关闭时清零，避免重新开启时读到旧值
+
         CPUPower = 0f;
-        SetCpuMonitorState(false);
-        SaveConfig("MonitorCPU");
+
+        UserSettingChanged("MonitorCPU");
         // 手动更新勾选状态（因为提前 return 会跳过 CreateMenuItem 的自动勾选）
       }, false));
       monitorCPUMenu.DropDownItems.Add(new ToolStripSeparator());
@@ -788,10 +729,10 @@ namespace OmenSuperHub {
         monitorGPUMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorGpuOn, "monitorGPUGroup", (s, e) => {
           monitorGPU = true;
           gpuTempReady = false; // 等待获取到温度后再参与风扇控制
-          rawPowerGPU = 0f;     // 清除可能残留的脏功率值
+
           GPUPower = 0f;
-          SetGpuMonitorState(true);
-          SaveConfig("MonitorGPU");
+
+          UserSettingChanged("MonitorGPU");
         }, true));
         monitorGPUMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorGpuOff, "monitorGPUGroup", (s, e) => {
           // 自动转速模式下禁止彻底关闭监控
@@ -803,10 +744,10 @@ namespace OmenSuperHub {
           }
           monitorGPU = false;
           gpuTempReady = false;
-          rawPowerGPU = 0f;  // 关闭时清零，避免重新开启时读到旧值
+
           GPUPower = 0f;
-          SetGpuMonitorState(false);
-          SaveConfig("MonitorGPU");
+
+          UserSettingChanged("MonitorGPU");
         }, false));
         monitorGPUMenu.DropDownItems.Add(new ToolStripSeparator());
         monitorGPUMenu.DropDownItems.Add(CreateMonitorMetricItem(Strings.MonitorGpuTempLabel, "showGPUTempGroup", () => showGPUTemp, value => showGPUTemp = value, "ShowGPUTemp"));
@@ -816,33 +757,33 @@ namespace OmenSuperHub {
       ToolStripMenuItem monitorFanMenu = new ToolStripMenuItem(Strings.MonitorFanLabel);
       monitorFanMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorFanOn, "monitorFanGroup", (s, e) => {
         monitorFan = true;
-        SaveConfig("MonitorFan");
+        UserSettingChanged("MonitorFan");
       }, false));
       monitorFanMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorFanOff, "monitorFanGroup", (s, e) => {
         monitorFan = false;
-        SaveConfig("MonitorFan");
+        UserSettingChanged("MonitorFan");
       }, true));
       hardwareMonitorMenu.DropDownItems.Add(monitorFanMenu);
       ToolStripMenuItem monitorRefreshMenu = new ToolStripMenuItem(Strings.MonitorRefresh);
       monitorRefreshMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorRefreshHigh, "monitorRefreshGroup", (s, e) => {
         monitorRefreshRate = "high";
-        tooltipUpdateTimer.Interval = 250;
-        SaveConfig("MonitorRefreshRate");
+        ApplyAdaptivePollingInterval();   // 电池供电时会自动降频
+        UserSettingChanged("MonitorRefreshRate");
       }, false));
       monitorRefreshMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorRefreshLow, "monitorRefreshGroup", (s, e) => {
         monitorRefreshRate = "low";
-        tooltipUpdateTimer.Interval = 1000;
-        SaveConfig("MonitorRefreshRate");
+        ApplyAdaptivePollingInterval();
+        UserSettingChanged("MonitorRefreshRate");
       }, true));
       hardwareMonitorMenu.DropDownItems.Add(monitorRefreshMenu);
       ToolStripMenuItem tempDisplayMenu = new ToolStripMenuItem(Strings.TempDisplay);
       tempDisplayMenu.DropDownItems.Add(CreateMenuItem(Strings.TempSmoothed, "tempDisplayGroup", (s, e) => {
         tempDisplayMode = "smoothed";
-        SaveConfig("TempDisplayMode");
+        UserSettingChanged("TempDisplayMode");
       }, true));
       tempDisplayMenu.DropDownItems.Add(CreateMenuItem(Strings.TempRaw, "tempDisplayGroup", (s, e) => {
         tempDisplayMode = "raw";
-        SaveConfig("TempDisplayMode");
+        UserSettingChanged("TempDisplayMode");
       }, false));
       hardwareMonitorMenu.DropDownItems.Add(tempDisplayMenu);
       menu.Items.Add(hardwareMonitorMenu);
@@ -870,6 +811,7 @@ namespace OmenSuperHub {
       textSizeLabel = new ToolStripMenuItem(string.Format(Strings.CurrentSliderValueTemp, $"{textSizeTrackBar.Value * 4}")) { Enabled = false };
 
       textSizeTrackBar.ValueChanged += (sender, e) => {
+          if (uiUpdates.Active) return;
         int calculatedSize = textSizeTrackBar.Value * 4; // 实际值 24 - 72
         textSizeLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{textSizeTrackBar.Value * 4}");
         textSize = calculatedSize;
@@ -940,7 +882,6 @@ namespace OmenSuperHub {
       menu.Items.Add(floatingBarMenu);
       ToolStripMenuItem omenKeyMenu = new ToolStripMenuItem(Strings.OmenKeyMenu);
       omenKeyMenu.DropDownItems.Add(CreateMenuItem(Strings.OmenKeyDefault, "omenKeyGroup", (s, e) => {
-        tooltipUpdateTimer.Enabled = false;
         ApplyOmenKeyAction(OmenKeyActions.Default);
       }, omenKey == OmenKeyActions.Default));
       omenKeyMenu.DropDownItems.Add(CreateMenuItem(Strings.OmenKeyToggle, "omenKeyGroup", (s, e) => {
@@ -973,7 +914,6 @@ namespace OmenSuperHub {
       };
       omenKeyPresetCandidatesMenu.DropDownOpening += (s, e) => {
         omenKeyPresetCandidatesMenu.DropDownItems.Clear();
-
 
         var selectedPresetKeys = GetOmenKeyPresetCandidateKeys();
         foreach (string presetKey in GetAvailablePresetKeys()) {
@@ -1182,9 +1122,16 @@ namespace OmenSuperHub {
       return null;
     }
 
+    static Form cleaningProgressForm;
+
     public static void StartCleanCreekWithProgress(int durationMs, string title, Action startCleanAction, Action stopCleanAction) {
+      if (cleaningProgressForm != null && !cleaningProgressForm.IsDisposed) {
+        cleaningProgressForm.Activate();
+        return;
+      }
       // 创建进度窗体
       Form progressForm = new Form();
+      cleaningProgressForm = progressForm;
       progressForm.Text = title;
       progressForm.Size = new System.Drawing.Size(300, 150);
       progressForm.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -1209,11 +1156,9 @@ namespace OmenSuperHub {
       // 倒计时计时器
       System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
       timer.Interval = 1000; // 每秒更新一次
-      DateTime startTime = DateTime.Now;
-      int remainingSeconds = durationMs / 1000;
+      long startTime = controlClock.Milliseconds;
       timer.Tick += (sender, e) => {
-        TimeSpan elapsed = DateTime.Now - startTime;
-        int remaining = (int)(durationMs - elapsed.TotalMilliseconds) / 1000;
+        int remaining = (int)(durationMs - (controlClock.Milliseconds - startTime)) / 1000;
         if (remaining <= 0) {
           timer.Stop();
           progressForm.Close();      // 倒计时结束，关闭窗体
@@ -1228,21 +1173,24 @@ namespace OmenSuperHub {
         progressForm.Close();          // 用户点击停止，关闭窗体
       };
 
-      // 窗体关闭时执行停止清洁（无论是倒计时结束还是用户点击停止）
-      progressForm.FormClosed += (sender, e) => {
+      bool ended = false;
+      Action finish = () => {
+        if (ended) return;
+        ended = true;
+        timer.Stop();
+        cleaningProgressForm = null;
         stopCleanAction?.Invoke();
       };
-
-      // 开始清洁
-      startCleanAction?.Invoke();
-
-      // 启动倒计时
-      timer.Start();
-
-      // 显示模态对话框（阻止父窗体操作）
-      progressForm.ShowDialog();
-
-      // 注意：ShowDialog 会阻塞直到窗体关闭，但内部倒计时和停止按钮正常工作
+      progressForm.FormClosed += (sender, e) => finish();
+      try {
+        startCleanAction?.Invoke();
+        timer.Start();
+        progressForm.ShowDialog();
+      } finally {
+        finish();
+        timer.Dispose();
+        progressForm.Dispose();
+      }
     }
 
     public class CustomTrackBar : TrackBar {
@@ -1252,7 +1200,6 @@ namespace OmenSuperHub {
         if (m.Msg == WM_MOUSEWHEEL) {
           // 解析滚轮滚动量
           int delta = (short)((m.WParam.ToInt64() >> 16) & 0xFFFF);
-          Console.WriteLine($"delta: {delta}");
           if (delta < 120 || delta > 120) {
             delta = delta > 0 ? 120 : -120;
           }
@@ -1348,6 +1295,8 @@ namespace OmenSuperHub {
       var openForms = Application.OpenForms.Cast<Form>().ToList();
       foreach (Form form in openForms) {
         if (form == null || form.IsDisposed) continue;
+        // Language/menu rendering must not cancel a temporary hardware operation.
+        if (form == cleaningProgressForm) continue;
         try {
           form.Close();
         } catch (Exception ex) {
@@ -1378,7 +1327,8 @@ namespace OmenSuperHub {
       if (trayIcon == null || trayIcon.ContextMenuStrip == null) return;
       CloseOpenTrayMenus(trayIcon.ContextMenuStrip);
       BuildTrayMenu(trayIcon.ContextMenuStrip);
-      RestoreConfig();
+      ApplyPresetSettings(currentPreset);
+      RenderOtherSettings();
     }
 
     // Generalized fan curve editor: handles cool.txt, silent.txt, and custom.txt.
@@ -1432,7 +1382,7 @@ namespace OmenSuperHub {
             string fanTableKey = System.IO.Path.GetFileNameWithoutExtension(fileName).ToLowerInvariant();
             fanTable = fanTableKey;
             LoadFanConfig(fileName);
-            SaveConfig("FanTable");
+            UserSettingChanged("FanTable");
             string modeText =
                 fanTableKey == "silent" ? Strings.FanSilentMode :
                 fanTableKey == "cool" ? Strings.FanCoolMode :
@@ -1459,7 +1409,6 @@ namespace OmenSuperHub {
       }
     }
 
-
     static bool ApplyCustomFanConfig() {
       string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
       string coolFilePath = Path.Combine(baseDirectory, "cool.txt");
@@ -1474,7 +1423,7 @@ namespace OmenSuperHub {
 
         fanTable = "custom";
         LoadFanConfig("custom.txt");
-        SaveConfig("FanTable");
+        UserSettingChanged("FanTable");
         return true;
       } catch (Exception ex) when (
           ex is IOException ||

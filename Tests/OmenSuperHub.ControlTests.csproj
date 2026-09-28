@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>OmenSuperHub.ControlTests</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../App/Control/Clock.cs" Link="Control/Clock.cs" />
+    <Compile Include="../App/Control/HardwareDispatcher.cs" Link="Control/HardwareDispatcher.cs" />
+    <Compile Include="../App/Control/FanController.cs" Link="Control/FanController.cs" />
+    <Compile Include="../App/Control/Monitoring.cs" Link="Control/Monitoring.cs" />
+    <Compile Include="../App/Control/NativeBiosWmi.cs" Link="Control/NativeBiosWmi.cs" />
+    <Compile Include="ControlTests.cs" />
+    <Compile Include="NativeBiosTests.cs" />
+  </ItemGroup>
+</Project>

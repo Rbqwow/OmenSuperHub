@@ -48,6 +48,9 @@ jobs:
       - name: Restore NuGet packages
         run: nuget restore OmenSuperHub.sln
 
+      - name: Run hardware control regression tests
+        run: dotnet run --project Tests/OmenSuperHub.ControlTests.csproj -c Release
+
       - name: Build solution
         run: msbuild OmenSuperHub.sln /p:Configuration=Release /p:Platform=x64 /m /verbosity:minimal
 

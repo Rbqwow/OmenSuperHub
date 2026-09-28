@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Management;
+using System.Threading;
+using OmenSuperHub.Control;
 using HP.Omen.Core.Common.PowerControl.Enum;
 using HP.Omen.Core.Common.WMI;
 using HP.Omen.Core.Model.Device.Models;
@@ -10,6 +12,22 @@ using static HP.Omen.Core.Model.Device.Models.GraphicsSwitcherHelper;
 namespace OmenSuperHub {
   internal class OmenHardware {
     private static bool? _isGamingProduct;
+    [ThreadStatic] internal static Func<bool> CommandGuard;
+    private static readonly NativeBiosWmi nativeBiosWmi = new NativeBiosWmi();
+    private static bool preferNativeBiosWmi;
+
+    /// <summary>
+    /// EC / BIOS WMI 总线的跨线程串行化屏障。
+    /// `SendOmenBiosWmi` 会被硬件调度器、后台监控与菜单信息查询并发调用，
+    /// 而底层 `root\wmi:hpqBIntM`
+    /// 的 EC 总线无并发仲裁能力，并发访问会导致指令超时并返回
+    /// `0x03 - Command Not Available`。
+    /// </summary>
+    private static readonly SemaphoreSlim _biosWmiGate = new SemaphoreSlim(1, 1);
+
+    /// <summary>获取 EC 总线锁的最长等待时间（毫秒）。超时则放弃本次下发并记录。</summary>
+    private const int BiosWmiGateTimeoutMs = 5000;
+
     public static string Validation(string displayName) {
       if (IsGamingProduct(displayName)) {
         return Strings.ValidationGamingProduct;
@@ -289,12 +307,12 @@ namespace OmenSuperHub {
     }
 
     // 设置 LoadLine（负载线校准）级别,level 取值范围取决于平台，通常为 1 ~ LoadLineSupportLevels
-    public static void SetLoadLine(int level) {
+    public static bool SetLoadLine(int level) {
       byte[] inputData = new byte[128];
       inputData[0] = 0;
       inputData[1] = 13;        // 子命令：LoadLine 操作
       inputData[2] = (byte)level;
-      SendOmenBiosWmi(0x37, inputData, 0); // 0x37 = commandType 55
+      return SendOmenBiosWmi(0x37, inputData, 0) != null; // 0x37 = commandType 55
     }
 
     // 获取当前 LoadLine 级别
@@ -310,13 +328,13 @@ namespace OmenSuperHub {
     }
 
     // 通过 WMI 设置 IccMax（CPU 电流限制，单位安培）
-    public static void SetIccMaxByWmi(decimal iccMaxAmpere) {
+    public static bool SetIccMaxByWmi(decimal iccMaxAmpere) {
       byte[] inputData = new byte[128];
       inputData[0] = 0;
       inputData[1] = 15;        // 子命令：IccMax 操作
       inputData[2] = (byte)((int)iccMaxAmpere & 0xFF);
       inputData[3] = (byte)(((int)iccMaxAmpere >> 8) & 0xFF);
-      SendOmenBiosWmi(0x37, inputData, 0);
+      return SendOmenBiosWmi(0x37, inputData, 0) != null;
     }
 
     /// <summary>
@@ -330,12 +348,12 @@ namespace OmenSuperHub {
     /// 3 - VR（电压调节模块）温度
     /// </param>
     /// <returns>温度值（℃），失败或传感器无效时返回 -1</returns>
-    public static int GetSensorTemperature(byte sensorIndex) {
+    public static int GetSensorTemperature(byte sensorIndex, Func<bool> shouldRead = null) {
       byte[] input = new byte[4];
       input[0] = sensorIndex;   // 其余字节自动为 0
 
       // commandType = 35 (0x23), 返回 4 字节
-      byte[] result = SendOmenBiosWmi(0x23, input, 4);
+      byte[] result = SendOmenBiosWmi(0x23, input, 4, shouldStart: shouldRead);
 
       if (result != null && result.Length > 0) {
         return result[0];
@@ -344,21 +362,19 @@ namespace OmenSuperHub {
       return -1;
     }
 
-    // 通过环境传感器温度来预估CPU温度
-    public static float GetFittingTemperature() {
-      float temp = GetSensorTemperature(1);
-      if (temp < 25) return temp;
-      else return temp * 1.2f - 5;
-    }
-
+    /// <summary>
+    /// 0x10 同时启用并续期固件的自定义散热控制；约 120 秒不调用会退回默认状态。
+    /// 必须由硬件调度器定期执行，不能作为可跳过的普通监控查询。
+    /// 参考 Linux hp-wmi.c 中 hp_wmi_get_fan_count_userdefine_trigger。
+    /// </summary>
     /// <param name="ocp">输出：是否触发过流保护 (Bit 0)</param>
     /// <param name="otp">输出：是否触发过温保护 (Bit 1)</param>
     /// <returns>true：成功读取并解析；false：WMI 通信失败</returns>
-    public static bool GetFanCount(out bool ocp, out bool otp) {
+    public static bool GetFanCount(out bool ocp, out bool otp, Func<bool> shouldRead = null) {
       ocp = false;
       otp = false;
 
-      byte[] result = SendOmenBiosWmi(0x10, new byte[] { 0x00, 0x00, 0x00, 0x00 }, 4);
+      byte[] result = SendOmenBiosWmi(0x10, new byte[] { 0x00, 0x00, 0x00, 0x00 }, 4, shouldStart: shouldRead);
 
       if (result == null || result.Length < 2)
         return false;   // 通信失败或返回数据不足
@@ -370,21 +386,13 @@ namespace OmenSuperHub {
       return true;
     }
 
-    public static List<int> GetFanLevel() {
-      // Send command to retrieve fan speed
-      List<int> fanSpeedNow = new List<int> { 0, 0, 0 };
-      byte[] fanLevel = SendOmenBiosWmi(0x2D, new byte[] { 0x00, 0x00, 0x00, 0x00 }, 128);
-      if (fanLevel != null) {
-        if (fanLevel.Length >= 3) {
-          fanSpeedNow[0] = fanLevel[0];
-          fanSpeedNow[1] = fanLevel[1];
-          fanSpeedNow[2] = fanLevel[2];
-        }
-        else {
-          Logger.Error($": GetFanLevel:- Failed: Error  length={fanLevel.Length}");
-        }
-      }
-      return fanSpeedNow;
+    public static bool GetFanLevel(out int[] levels, Func<bool> shouldRead = null) {
+      levels = null;
+      byte[] data = SendOmenBiosWmi(0x2D, new byte[] { 0, 0, 0, 0 }, 128, shouldStart: shouldRead);
+      if (data == null) return false;
+      if (data.Length < 3) { Logger.Error("Fan speed response too short", "bios.fan-level.length"); return false; }
+      levels = new[] { (int)data[0], (int)data[1], (int)data[2] };
+      return true;
     }
 
     public static byte[] GetFanTable() {
@@ -508,11 +516,12 @@ namespace OmenSuperHub {
       return result != null;
     }
 
-    public static void SetFanLevel(int fanSpeed1, int fanSpeed2, bool fan3 = false, bool fanClean = false) {
+    public static bool SetFanLevel(int fanSpeed1, int fanSpeed2, bool fan3 = false, bool fanClean = false) {
       byte[] data = new byte[fan3 ? 3 : 2];
       if (fanClean) {
         GetFanType(out var types, out var Capabilities);
         var caps = Capabilities.Take(types.Count).ToList();
+        if (caps.Count < (fan3 ? 3 : 2)) return false;
         data[0] = (byte)(caps[0] ? fanSpeed1 + 128 : fanSpeed1);
         data[1] = (byte)(caps[1] ? fanSpeed2 + 128 : fanSpeed2);
         if (fan3) {
@@ -526,7 +535,7 @@ namespace OmenSuperHub {
           data[2] = (byte)((fanSpeed1 + fanSpeed2) / 2);
         }
       }
-      SendOmenBiosWmi(0x2E, data, 0);
+      return SendOmenBiosWmi(0x2E, data, 0) != null;
       //Console.WriteLine("SetFanLevel: " + fanSpeed * 100);
     }
 
@@ -674,7 +683,7 @@ namespace OmenSuperHub {
     /// <summary>
     /// 根据 UI 层性能模式和当前热策略版本，自动映射为 EC 风扇指令，
     /// </summary>
-    public static void SetFanMode(PerformanceModeOnUI uiMode) {
+    public static bool SetFanMode(PerformanceModeOnUI uiMode) {
       ThermalPolicyVersion version = GetThermalPolicyVersion();
       byte ecCommand = 0;
 
@@ -711,19 +720,19 @@ namespace OmenSuperHub {
           break;
       }
 
-      SendOmenBiosWmi(0x1A, new byte[] { 0xFF, ecCommand }, 0);
+      return SendOmenBiosWmi(0x1A, new byte[] { 0xFF, ecCommand }, 0) != null;
     }
 
-    public static byte[] SetFanMode(PerformanceMode mode) {
-      return SendOmenBiosWmi(0x1A, new byte[] { 0xFF, (byte)mode }, 0);
+    public static bool SetFanMode(PerformanceMode mode) {
+      return SendOmenBiosWmi(0x1A, new byte[] { 0xFF, (byte)mode }, 0) != null;
     }
 
-    public static void SetUnleashMode() {
-      SetFanMode(PerformanceMode.L7);
+    public static bool SetUnleashMode() {
+      return SetFanMode(PerformanceMode.L7);
     }
 
-    public static void SetBalanceMode() {
-      SetFanMode(PerformanceMode.L2);
+    public static bool SetBalanceMode() {
+      return SetFanMode(PerformanceMode.L2);
     }
 
     /// <summary>
@@ -733,7 +742,7 @@ namespace OmenSuperHub {
     /// <param name="enablePpab">是否启用 PPAB</param>
     /// <param name="dState">功耗状态（1=正常, 2=低功耗）</param>
     /// <param name="gps">图形性能级别（取决于平台配置的 GpsMin/MaxTemperature）</param>
-    public static void SetGpuPowerState(bool enableTgp, bool enablePpab, int dState = 1, int gps = 0) {
+    public static bool SetGpuPowerState(bool enableTgp, bool enablePpab, int dState = 1, int gps = 0) {
       byte[] data = new byte[4]
       {
         Convert.ToByte(enableTgp),
@@ -741,23 +750,23 @@ namespace OmenSuperHub {
         Convert.ToByte(dState),
         Convert.ToByte(gps)
       };
-      SendOmenBiosWmi(0x22, data, 0, 0x20008); // commandType=34, command=131080
+      return SendOmenBiosWmi(0x22, data, 0, 0x20008) != null; // commandType=34, command=131080
     }
 
     // Tpp设置
-    public static void SetConcurrentTdp(byte value) {
-      SendOmenBiosWmi(0x29, new byte[] { 0xFF, 0xFF, 0xFF, value }, 0);
+    public static bool SetConcurrentTdp(byte value) {
+      return SendOmenBiosWmi(0x29, new byte[] { 0xFF, 0xFF, 0xFF, value }, 0) != null;
     }
 
     // PL2和PL1，立即生效，狂暴平衡都生效，直接对应功率W，1-254，需关闭ts，再点击狂暴模式失效
-    public static void SetCpuPowerLimit(byte value) {
-      SendOmenBiosWmi(0x29, new byte[] { value, value, 0xFF, 0xFF }, 0);
+    public static bool SetCpuPowerLimit(byte value) {
+      return SendOmenBiosWmi(0x29, new byte[] { value, value, 0xFF, 0xFF }, 0) != null;
       //Console.WriteLine("SetCpuPowerLimit: " + value);
     }
 
     // PL4，狂暴平衡都生效，50-19，100-54，180-106，200-122，需关闭ts，1-254，和SetCpuPowerLimit优先级相同
-    public static void SetCpuPowerLimit4(byte value) {
-      SendOmenBiosWmi(0x29, new byte[] { 0xFF, 0xFF, value, 0xFF }, 0);
+    public static bool SetCpuPowerLimit4(byte value) {
+      return SendOmenBiosWmi(0x29, new byte[] { 0xFF, 0xFF, value, 0xFF }, 0) != null;
     }
 
     public static bool IsTwoBytePL4Supported() {
@@ -771,7 +780,7 @@ namespace OmenSuperHub {
       return (data[4] & 0x10) != 0;
     }
 
-    public static void SetPL4DoubleByte(ushort pl4Value) {
+    public static bool SetPL4DoubleByte(ushort pl4Value) {
       byte[] data = new byte[128];
       data[0] = 0x20;                         // 固定标识
       data[2] = (byte)(pl4Value & 0xFF);       // PL4 低字节
@@ -780,15 +789,15 @@ namespace OmenSuperHub {
       data[6] = 0xFF; data[7] = 0xFF;
       data[10] = 0xFF; data[11] = 0xFF;
 
-      SendOmenBiosWmi(0x37, data, 0); // commandType = 55 = 0x37
+      return SendOmenBiosWmi(0x37, data, 0) != null; // commandType = 55 = 0x37
     }
 
-    public static void SetMaxFanSpeedOn() {
-      SendOmenBiosWmi(0x27, new byte[] { 0x01 }, 0);
+    public static bool SetMaxFanSpeedOn() {
+      return SendOmenBiosWmi(0x27, new byte[] { 0x01 }, 0) != null;
     }
 
-    public static void SetMaxFanSpeedOff() {
-      SendOmenBiosWmi(0x27, new byte[] { 0x00 }, 0);
+    public static bool SetMaxFanSpeedOff() {
+      return SendOmenBiosWmi(0x27, new byte[] { 0x00 }, 0) != null;
     }
 
     //// 似乎没有作用，且不支持AMD
@@ -809,66 +818,96 @@ namespace OmenSuperHub {
     //  Console.WriteLine("+ OK: " + outputData);
     //}
 
-    public static byte[] SendOmenBiosWmi(uint commandType, byte[] data, int outputSize, uint command = 0x20008) {
-      const string namespaceName = @"root\wmi";
-      const string className = "hpqBIntM";
-      string methodName = "hpqBIOSInt" + outputSize.ToString();
-      byte[] sign = { 0x53, 0x45, 0x43, 0x55 };
+    public static byte[] SendOmenBiosWmi(uint commandType, byte[] data, int outputSize, uint command = 0x20008, Func<bool> shouldStart = null) {
+      // ── 串行化屏障 ────────────────────────────────────────────────────────
+      // 超时仅限制等待串行化屏障，不限制已经进入 InvokeMethod 的原生调用。
+      // 调用图约定：SendOmenBiosWmi 自身不调用任何其它会间接回到本方法的包装函数
+      // （SetFanLevel / SetCpuPowerLimit 等均只被更上层调用），故不存在自锁（重入）风险。
+      bool acquired;
+      try {
+        acquired = _biosWmiGate.Wait(BiosWmiGateTimeoutMs);
+      } catch (ObjectDisposedException) {
+        return null;   // 应用已退出，放弃本次下发
+      }
+      if (!acquired) {
+        Logger.Error(": SendOmenBiosWmi:- Skipped: 获取 EC 总线串行化屏障超时 "
+                     + BiosWmiGateTimeoutMs + "ms" + $"(CommandType=0x{commandType:X2})", $"bios.gate.{commandType:X}");
+        return null;
+      }
+
+      // 发现接口、验证原生端点和实际调用共用同一把锁；所有日志在释放锁后输出。
+      byte[] output = null;
+      Exception pendingException = null;
+      bool nativeActivated = false, usedNative = preferNativeBiosWmi, invoked = false;
+      Func<bool> current = () => (shouldStart == null || shouldStart()) && (CommandGuard == null || CommandGuard());
 
       try {
-        // ① ManagementClass 本身也必须 Dispose
-        using (var biosDataInClass = new ManagementClass(namespaceName, "hpqBDataIn", null))
-        using (var biosDataIn = biosDataInClass.CreateInstance()) {
-          biosDataIn["Command"] = command;
-          biosDataIn["CommandType"] = commandType;
-          biosDataIn["Sign"] = sign;
-          if (data != null) {
-            biosDataIn["hpqBData"] = data;
-            biosDataIn["Size"] = (uint)data.Length;
-          } else {
-            biosDataIn["Size"] = (uint)0;
+        if (!current()) return null;
+        if (!usedNative) {
+          try {
+            output = SendCimBiosWmi(command, commandType, data, outputSize, current, ref invoked);
+          } catch (ManagementException ex) when (!invoked &&
+            (ex.ErrorCode == ManagementStatus.NotFound || ex.ErrorCode == ManagementStatus.InvalidClass ||
+             ex.ErrorCode == ManagementStatus.InvalidNamespace)) {
+            // Only missing schema before invocation permits fallback. An in-flight
+            // write or access-denied error must not be retried on another transport.
+            usedNative = true;
           }
+        }
+        if (usedNative) output = nativeBiosWmi.Execute(command, commandType, data, outputSize, current);
+      } catch (Exception ex) {
+        pendingException = ex;
+      } finally {
+        if (usedNative) {
+          if (output != null || pendingException is BiosReturnCodeException) {
+            nativeActivated = !preferNativeBiosWmi;
+            preferNativeBiosWmi = true;
+          } else if (pendingException != null) preferNativeBiosWmi = false;
+        }
+        _biosWmiGate.Release();
+      }
 
-          // ② searcher、collection、biosMethods 全部局部化并 Dispose
-          using (var localSearcher = new ManagementObjectSearcher(namespaceName, $"SELECT * FROM {className}"))
-          using (var collection = localSearcher.Get()) {
-            ManagementObject biosMethods = collection.Cast<ManagementObject>().FirstOrDefault();
-            if (biosMethods == null) return null;
+      if (nativeActivated)
+        Logger.Info("HP WMI class definitions unavailable; validated the firmware GUID and switched to native BIOS WMI", "bios.native-transport");
+      if (output == null && current()) {
+        var rejected = pendingException as BiosReturnCodeException;
+        string detail = rejected != null ? rejected.Message : pendingException?.ToString() ?? "Missing BIOS instance or empty response";
+        Logger.Error($"BIOS command=0x{command:X}, type=0x{commandType:X}, transport={(usedNative ? "native" : "CIM")}: {detail}",
+          $"bios.{command:X}.{commandType:X}.{(rejected != null ? rejected.ReturnCode.ToString() : pendingException?.GetType().Name ?? "empty")}");
+      }
+      return output;
+    }
 
-            using (biosMethods)
-            using (var inParams = biosMethods.GetMethodParameters(methodName)) {
-              inParams["InData"] = biosDataIn;
+    private static byte[] SendCimBiosWmi(uint command, uint commandType, byte[] data, int outputSize, Func<bool> current, ref bool invoked) {
+      const string namespaceName = @"root\wmi";
+      string methodName = "hpqBIOSInt" + outputSize;
+      using (var inputClass = new ManagementClass(namespaceName, "hpqBDataIn", null))
+      using (var input = inputClass.CreateInstance()) {
+        input["Command"] = command;
+        input["CommandType"] = commandType;
+        input["Sign"] = new byte[] { 0x53, 0x45, 0x43, 0x55 };
+        input["Size"] = (uint)(data?.Length ?? 0);
+        if (data != null) input["hpqBData"] = data;
 
-              using (var result = biosMethods.InvokeMethod(methodName, inParams, null)) {
-                using (var outData = result["OutData"] as ManagementBaseObject) {
-                  uint returnCode = (uint)outData["rwReturnCode"];
-
-                  if (returnCode == 0) {
-                    if (outputSize != 0)
-                      return (byte[])outData["Data"];
-                    else
-                      return Array.Empty<byte>();
-                  } else {
-                    string errorMessage = "";
-                    switch (returnCode) {
-                      case 0x03: errorMessage = " - Command Not Available"; break;
-                      case 0x05: errorMessage = " - Input or Output Size Too Small"; break;
-                    }
-                    Logger.Error(": SendOmenBiosWmi: " + $"(CommandType=0x{commandType:X2})" + " - Failed: Error " + errorMessage);
-                  }
-                }
-              }
+        using (var searcher = new ManagementObjectSearcher(namespaceName, "SELECT * FROM hpqBIntM"))
+        using (var instances = searcher.Get()) {
+          ManagementObject instance = instances.Cast<ManagementObject>().FirstOrDefault();
+          if (instance == null) return null;
+          using (instance)
+          using (var parameters = instance.GetMethodParameters(methodName)) {
+            parameters["InData"] = input;
+            // Discovery can block; recheck immediately before touching the firmware.
+            if (!current()) return null;
+            invoked = true;
+            using (var result = instance.InvokeMethod(methodName, parameters, null))
+            using (var output = result["OutData"] as ManagementBaseObject) {
+              uint returnCode = (uint)output["rwReturnCode"];
+              if (returnCode != 0) throw new BiosReturnCodeException(returnCode);
+              return outputSize == 0 ? Array.Empty<byte>() : (byte[])output["Data"];
             }
           }
         }
-      } catch (ManagementException ex) {
-        string errorMessage = $"- WMI Exception (CommandType=0x{commandType:X2}): {ex.ErrorCode} - {ex.Message}";
-        Logger.Error(": SendOmenBiosWmi:- Failed: Error " + errorMessage);
-      } catch (Exception ex) {
-        string errorMessage = $"- Unexpected Exception (CommandType=0x{commandType:X2}): {ex.Message}";
-        Logger.Error(": SendOmenBiosWmi:- Failed: Error " + errorMessage);
       }
-      return null;
     }
 
     public static void OmenKeyOff() {
