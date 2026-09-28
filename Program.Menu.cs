@@ -967,7 +967,7 @@ namespace OmenSuperHub {
       };
       omenKeyPresetCandidatesMenu.DropDown.MouseLeave += (s, e) => {
         var dropDown = omenKeyPresetCandidatesMenu.DropDown;
-        if (!dropDown.ClientRectangle.Contains(dropDown.PointToClient(Control.MousePosition))) {
+        if (!dropDown.ClientRectangle.Contains(dropDown.PointToClient(System.Windows.Forms.Control.MousePosition))) {
           dropDown.Close(ToolStripDropDownCloseReason.CloseCalled);
         }
       };

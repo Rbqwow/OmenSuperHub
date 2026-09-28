@@ -288,6 +288,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="App\Logger.cs" />
+    <Compile Include="App\Control\Clock.cs" />
+    <Compile Include="App\Control\BoundedLog.cs" />
     <Compile Include="FloatingForm.cs">
       <SubType>Form</SubType>
     </Compile>
