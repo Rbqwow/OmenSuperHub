@@ -411,6 +411,10 @@ internal sealed class IntelCpu : GenericCpu
 
     public override void Update()
     {
+        if (_packageTemperature != null) _packageTemperature.Value = null;
+        if (_powerSensors != null)
+            foreach (Sensor sensor in _powerSensors)
+                if (sensor != null) sensor.Value = null;
         base.Update();
 
         uint eax;

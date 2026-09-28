@@ -55,8 +55,24 @@ internal static class NvApi
     private static NvAPI_GetInterfaceVersionStringDelegate _nvAPI_GetInterfaceVersionString;
     private static NvAPI_GPU_GetFullNameDelegate _nvAPI_GPU_GetFullName;
 
+    private static bool _ownsInitialization;
+    private static NvAPI_InitializeDelegate _unload;
+
+    public static void Close()
+    {
+        // Only balance this library's own successful Initialize. Never drain other clients' references.
+        if (_ownsInitialization && _unload != null)
+        {
+            NvStatus status = _unload();
+            if (status == NvStatus.OK) _ownsInitialization = false;
+            else System.Diagnostics.Debug.WriteLine("NVAPI unload rejected: " + status);
+        }
+        IsAvailable = false;
+    }
+
     public static void Initialize()
     {
+        if (IsAvailable) return;
         NvAPI_InitializeDelegate nvApiInitialize;
 
         try
@@ -71,35 +87,43 @@ internal static class NvApi
             return;
         }
 
-        if (nvApiInitialize() == NvStatus.OK)
+        _unload = GetDelegate<NvAPI_InitializeDelegate>(0xD22BDD7E);
+        if (_unload == null || nvApiInitialize == null) return;
+        if (_ownsInitialization || nvApiInitialize() == NvStatus.OK)
         {
-            NvAPI_GPU_GetThermalSettings = GetDelegate<NvAPI_GPU_GetThermalSettingsDelegate>(0xE3640A56);
-            _nvAPI_GPU_GetFullName = GetDelegate<NvAPI_GPU_GetFullNameDelegate>(0xCEEE8E9F);
-            NvAPI_EnumNvidiaDisplayHandle = GetDelegate<NvAPI_EnumNvidiaDisplayHandleDelegate>(0x9ABDD40D);
-            NvAPI_GetPhysicalGPUsFromDisplay = GetDelegate<NvAPI_GetPhysicalGPUsFromDisplayDelegate>(0x34EF9506);
-            NvAPI_EnumPhysicalGPUs = GetDelegate<NvAPI_EnumPhysicalGPUsDelegate>(0xE5AC921F);
-            NvAPI_GPU_GetTachReading = GetDelegate<NvAPI_GPU_GetTachReadingDelegate>(0x5F608315);
-            NvAPI_GPU_GetAllClocks = GetDelegate<NvAPI_GPU_GetAllClocksDelegate>(0x1BD69F49);
-            NvAPI_GPU_GetDynamicPstatesInfoEx = GetDelegate<NvAPI_GPU_GetDynamicPstatesInfoExDelegate>(0x60DED2ED);
-            NvAPI_GPU_GetUsages = GetDelegate<NvAPI_GPU_GetUsagesDelegate>(0x189A1FDF);
-            NvAPI_GPU_GetCoolerSettings = GetDelegate<NvAPI_GPU_GetCoolerSettingsDelegate>(0xDA141340);
-            NvAPI_GPU_SetCoolerLevels = GetDelegate<NvAPI_GPU_SetCoolerLevelsDelegate>(0x891FA0AE);
-            NvAPI_GPU_GetMemoryInfo = GetDelegate<NvAPI_GPU_GetMemoryInfoDelegate>(0x774AA982);
-            NvAPI_GPU_GetMemoryInfoEx = GetDelegate<NvAPI_GPU_GetMemoryInfoExDelegate>(0xC0599498);
-            NvAPI_GetDisplayDriverVersion = GetDelegate<NvAPI_GetDisplayDriverVersionDelegate>(0xF951A4D1);
-            _nvAPI_GetInterfaceVersionString = GetDelegate<NvAPI_GetInterfaceVersionStringDelegate>(0x01053FA5);
-            NvAPI_GPU_GetPCIIdentifiers = GetDelegate<NvAPI_GPU_GetPCIIdentifiersDelegate>(0x2DDFB66E);
-            NvAPI_GPU_GetBusId = GetDelegate<NvAPI_GPU_GetBusIdDelegate>(0x1BE0B8E5);
-            NvAPI_GPU_ClientFanCoolersGetStatus = GetDelegate<NvAPI_GPU_ClientFanCoolersGetStatusDelegate>(0x35AED5E8);
-            NvAPI_GPU_GetAllClockFrequencies = GetDelegate<NvAPI_GPU_GetAllClockFrequenciesDelegate>(0xDCB616C3);
-            NvAPI_GPU_ClientFanCoolersGetControl = GetDelegate<NvAPI_GPU_ClientFanCoolersGetControlDelegate>(0x814B209F);
-            NvAPI_GPU_ClientFanCoolersSetControl = GetDelegate<NvAPI_GPU_ClientFanCoolersSetControlDelegate>(0xA58971A5);
-            NvAPI_GPU_ClientPowerTopologyGetStatus = GetDelegate<NvAPI_GPU_ClientPowerTopologyGetStatusDelegate>(0x0EDCF624E);
-            NvAPI_GPU_GetThermalSensors = GetDelegate<NvAPI_GPU_GetThermalSensorsDelegate>(0x65FE3AAD);
-            NvAPI_I2CReadEx = GetDelegate<NvAPI_I2CReadExDelegate>(0x4D7B0709);
-            NvAPI_GPU_ClientVoltRailsGetStatus = GetDelegate<NvAPI_GPU_ClientVoltRailsGetStatusDelegate>(0x465F9BCF);
+            _ownsInitialization = true;
+            try
+            {
+                NvAPI_GPU_GetThermalSettings = GetDelegate<NvAPI_GPU_GetThermalSettingsDelegate>(0xE3640A56);
+                _nvAPI_GPU_GetFullName = GetDelegate<NvAPI_GPU_GetFullNameDelegate>(0xCEEE8E9F);
+                NvAPI_EnumNvidiaDisplayHandle = GetDelegate<NvAPI_EnumNvidiaDisplayHandleDelegate>(0x9ABDD40D);
+                NvAPI_GetPhysicalGPUsFromDisplay = GetDelegate<NvAPI_GetPhysicalGPUsFromDisplayDelegate>(0x34EF9506);
+                NvAPI_EnumPhysicalGPUs = GetDelegate<NvAPI_EnumPhysicalGPUsDelegate>(0xE5AC921F);
+                NvAPI_GPU_GetTachReading = GetDelegate<NvAPI_GPU_GetTachReadingDelegate>(0x5F608315);
+                NvAPI_GPU_GetAllClocks = GetDelegate<NvAPI_GPU_GetAllClocksDelegate>(0x1BD69F49);
+                NvAPI_GPU_GetDynamicPstatesInfoEx = GetDelegate<NvAPI_GPU_GetDynamicPstatesInfoExDelegate>(0x60DED2ED);
+                NvAPI_GPU_GetUsages = GetDelegate<NvAPI_GPU_GetUsagesDelegate>(0x189A1FDF);
+                NvAPI_GPU_GetCoolerSettings = GetDelegate<NvAPI_GPU_GetCoolerSettingsDelegate>(0xDA141340);
+                NvAPI_GPU_SetCoolerLevels = GetDelegate<NvAPI_GPU_SetCoolerLevelsDelegate>(0x891FA0AE);
+                NvAPI_GPU_GetMemoryInfo = GetDelegate<NvAPI_GPU_GetMemoryInfoDelegate>(0x774AA982);
+                NvAPI_GPU_GetMemoryInfoEx = GetDelegate<NvAPI_GPU_GetMemoryInfoExDelegate>(0xC0599498);
+                NvAPI_GetDisplayDriverVersion = GetDelegate<NvAPI_GetDisplayDriverVersionDelegate>(0xF951A4D1);
+                _nvAPI_GetInterfaceVersionString = GetDelegate<NvAPI_GetInterfaceVersionStringDelegate>(0x01053FA5);
+                NvAPI_GPU_GetPCIIdentifiers = GetDelegate<NvAPI_GPU_GetPCIIdentifiersDelegate>(0x2DDFB66E);
+                NvAPI_GPU_GetBusId = GetDelegate<NvAPI_GPU_GetBusIdDelegate>(0x1BE0B8E5);
+                NvAPI_GPU_ClientFanCoolersGetStatus = GetDelegate<NvAPI_GPU_ClientFanCoolersGetStatusDelegate>(0x35AED5E8);
+                NvAPI_GPU_GetAllClockFrequencies = GetDelegate<NvAPI_GPU_GetAllClockFrequenciesDelegate>(0xDCB616C3);
+                NvAPI_GPU_ClientFanCoolersGetControl = GetDelegate<NvAPI_GPU_ClientFanCoolersGetControlDelegate>(0x814B209F);
+                NvAPI_GPU_ClientFanCoolersSetControl = GetDelegate<NvAPI_GPU_ClientFanCoolersSetControlDelegate>(0xA58971A5);
+                NvAPI_GPU_ClientPowerTopologyGetStatus = GetDelegate<NvAPI_GPU_ClientPowerTopologyGetStatusDelegate>(0x0EDCF624E);
+                NvAPI_GPU_GetThermalSensors = GetDelegate<NvAPI_GPU_GetThermalSensorsDelegate>(0x65FE3AAD);
+                NvAPI_I2CReadEx = GetDelegate<NvAPI_I2CReadExDelegate>(0x4D7B0709);
+                NvAPI_GPU_ClientVoltRailsGetStatus = GetDelegate<NvAPI_GPU_ClientVoltRailsGetStatusDelegate>(0x465F9BCF);
 
-            IsAvailable = true;
+                IsAvailable = NvAPI_EnumPhysicalGPUs != null && NvAPI_GPU_GetThermalSettings != null;
+                if (!IsAvailable) Close();
+            }
+            catch { Close(); throw; }
         }
     }
 
@@ -331,6 +355,9 @@ internal static class NvApi
         InvalidHandle = -8,
         IncompatibleStructVersion = -9,
         HandleInvalidated = -10,
+        DriverNotRunning = -156,
+        DriverReloadRequired = -157,
+        GpuNotPowered = -220,
         OpenGlContextNotCurrent = -11,
         NoGlExpert = -12,
         InstrumentationDisabled = -13,

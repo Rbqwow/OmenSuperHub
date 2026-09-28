@@ -70,6 +70,7 @@ internal sealed class Amd17Cpu : AmdCpu
 
     public override void Update()
     {
+        _processor.ClearSamples();
         base.Update();
         _processor.UpdateSensors();
     }
@@ -94,79 +95,57 @@ internal sealed class Amd17Cpu : AmdCpu
 
         public List<NumaNode> Nodes { get; } = new();
 
+        public void ClearSamples()
+        {
+            _coreTemperatureTctlTdie.Value = null;
+            _packagePower.Value = null;
+        }
+
         public void UpdateSensors()
         {
-            CpuId cpuId = Nodes[0]?.Cores[0]?.Threads.FirstOrDefault();
-            if (cpuId == null)
-                return;
-
+            ClearSamples();
+            CpuId cpuId = Nodes.FirstOrDefault()?.Cores.FirstOrDefault()?.Threads.FirstOrDefault();
+            if (cpuId == null) return;
             GroupAffinity previousAffinity = ThreadAffinity.Set(cpuId.Affinity);
-
-            // 功率
-            _cpu._pawnModule.ReadMsr(MSR_PWR_UNIT, out uint eax, out _);
-            int esu = (int)((eax >> 8) & 0x1F);
-            double energyBaseUnit = Math.Pow(0.5, esu);
-
-            DateTime sampleTime = DateTime.UtcNow;
-            _cpu._pawnModule.ReadMsr(MSR_PKG_ENERGY_STAT, out eax, out _);
-            uint totalEnergy = eax;
-
-            TimeSpan deltaTime = sampleTime - _lastSampleTime;
-            if (_lastSampleTime.Ticks == 0)
+            try
             {
-                deltaTime = TimeSpan.Zero;
-                _lastSampleTime = sampleTime;
-                _lastPwrValue = totalEnergy;
-            }
-            _lastSampleTime = sampleTime;
-
-            long pwr = _lastPwrValue <= totalEnergy
-                ? totalEnergy - _lastPwrValue
-                : (0xffffffff - _lastPwrValue) + totalEnergy;
-            _lastPwrValue = totalEnergy;
-
-            if (deltaTime.Ticks > 0)
-            {
-                double energy = energyBaseUnit * pwr / deltaTime.TotalSeconds;
-                if (!double.IsNaN(energy))
-                    _packagePower.Value = (float)energy;
-            }
-
-            // 温度
-            if (Mutexes.WaitPciBus(10))
-            {
-                uint temperature = _cpu._pawnModule.ReadSmn(F17H_M01H_THM_TCON_CUR_TMP);
-
-                bool tempOffsetFlag = (temperature & F17H_TEMP_RANGE_SEL_MASK) != 0
-                                      || (temperature & F17H_TEMP_TJ_SEL_MASK) == F17H_TEMP_TJ_SEL_MASK;
-                temperature = (temperature >> 21) * 125;
-
-                float offset = 0.0f;
-                if (!string.IsNullOrWhiteSpace(cpuId.Name))
+                // A failed MSR read only invalidates power; still attempt temperature.
+                if (_cpu._pawnModule.ReadMsr(MSR_PWR_UNIT, out uint units, out _) &&
+                    _cpu._pawnModule.ReadMsr(MSR_PKG_ENERGY_STAT, out uint totalEnergy, out _))
                 {
-                    if (cpuId.Name.Contains("1600X") || cpuId.Name.Contains("1700X") || cpuId.Name.Contains("1800X"))
-                        offset = -20.0f;
-                    else if (cpuId.Name.Contains("Threadripper 19") || cpuId.Name.Contains("Threadripper 29"))
-                        offset = -27.0f;
-                    else if (cpuId.Name.Contains("2700X"))
-                        offset = -10.0f;
+                    DateTime sampleTime = DateTime.UtcNow;
+                    double delta = (sampleTime - _lastSampleTime).TotalSeconds;
+                    if (_lastSampleTime.Ticks != 0 && delta > 0)
+                    {
+                        double energy = Math.Pow(0.5, (units >> 8) & 0x1F) * unchecked(totalEnergy - _lastPwrValue) / delta;
+                        if (!double.IsNaN(energy) && !double.IsInfinity(energy)) _packagePower.Value = (float)energy;
+                    }
+                    _lastSampleTime = sampleTime; _lastPwrValue = totalEnergy;
                 }
+                else _lastSampleTime = new DateTime(0);
 
-                float t = temperature * 0.001f;
-                if (tempOffsetFlag)
-                    t -= 49.0f;
-
-                if (offset >= 0)
+                if (!Mutexes.WaitPciBus(10)) return;
+                try
                 {
-                    _coreTemperatureTctlTdie.Value = t;
+                    uint raw = _cpu._pawnModule.ReadSmn(F17H_M01H_THM_TCON_CUR_TMP);
+                    // A disconnected/failed SMN read must not become a fresh zero-degree sample.
+                    if (raw == 0 || raw == uint.MaxValue) return;
+                    bool offsetFlag = (raw & F17H_TEMP_RANGE_SEL_MASK) != 0 ||
+                        (raw & F17H_TEMP_TJ_SEL_MASK) == F17H_TEMP_TJ_SEL_MASK;
+                    float value = (raw >> 21) * 0.125f - (offsetFlag ? 49 : 0);
+                    // Preserve the existing model exclusions: their Tctl offsets have not
+                    // been validated by this provider. Failure cleanup must not publish
+                    // an uncompensated value as a newly supported Tctl/Tdie sample.
+                    string name = cpuId.Name ?? string.Empty;
+                    if (name.Contains("1600X") || name.Contains("1700X") || name.Contains("1800X") ||
+                        name.Contains("Threadripper 19") || name.Contains("Threadripper 29") || name.Contains("2700X")) return;
+                    _coreTemperatureTctlTdie.Value = value;
                     _cpu.ActivateSensor(_coreTemperatureTctlTdie);
                 }
-
-                Mutexes.ReleasePciBus();
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }
+                finally { Mutexes.ReleasePciBus(); }
             }
-
-
-            ThreadAffinity.Set(previousAffinity);
+            finally { ThreadAffinity.Set(previousAffinity); }
         }
 
         public void AppendThread(CpuId thread, int numaId, int coreId)

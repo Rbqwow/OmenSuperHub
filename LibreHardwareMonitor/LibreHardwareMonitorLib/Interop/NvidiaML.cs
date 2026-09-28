@@ -7,6 +7,7 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using Windows.Win32;
+using LibreHardwareMonitor.Hardware.Gpu;
 
 namespace LibreHardwareMonitor.Interop;
 
@@ -15,7 +16,7 @@ internal static class NvidiaML
     private const string LinuxDllName = "nvidia-ml";
     private const string WindowsDllName = "nvml.dll";
 
-    private static readonly object _syncRoot = new();
+    private static object _syncRoot => NvidiaNative.Session.Gate;
 
     private static FreeLibrarySafeHandle _windowsDll;
 
@@ -147,46 +148,54 @@ internal static class NvidiaML
                 return true;
             }
 
-            if (Software.OperatingSystem.IsUnix)
+            try
             {
-                try
-                {
-                    IsAvailable = nvmlInit() == NvmlReturn.Success;
-                }
-                catch (DllNotFoundException)
-                { }
-                catch (EntryPointNotFoundException)
+                if (Software.OperatingSystem.IsUnix)
                 {
                     try
                     {
-                        IsAvailable = nvmlInitLegacy() == NvmlReturn.Success;
+                        IsAvailable = nvmlInit() == NvmlReturn.Success;
                     }
-                    catch (EntryPointNotFoundException)
+                    catch (DllNotFoundException)
                     { }
+                    catch (EntryPointNotFoundException)
+                    {
+                        try
+                        {
+                            IsAvailable = nvmlInitLegacy() == NvmlReturn.Success;
+                        }
+                        catch (EntryPointNotFoundException)
+                        { }
+                    }
                 }
-            }
-            else if (IsNvmlCompatibleWindowsVersion())
-            {
-                // Attempt to load the Nvidia Management Library from the
-                // windows standard search order for applications. This will
-                // help installations that either have the library in
-                // %windir%/system32 or provide their own library
-                _windowsDll = PInvoke.LoadLibrary(WindowsDllName);
-
-                // If there is no dll in the path, then attempt to load it
-                // from program files
-                if (_windowsDll.IsInvalid)
+                else if (IsNvmlCompatibleWindowsVersion())
                 {
-                    string programFilesDirectory = Environment.ExpandEnvironmentVariables("%ProgramW6432%");
-                    string dllPath = Path.Combine(programFilesDirectory, @"NVIDIA Corporation\NVSMI", WindowsDllName);
+                    // Attempt to load the Nvidia Management Library from the
+                    // windows standard search order for applications. This will
+                    // help installations that either have the library in
+                    // %windir%/system32 or provide their own library
+                    _windowsDll = PInvoke.LoadLibrary(WindowsDllName);
 
-                    _windowsDll = PInvoke.LoadLibrary(dllPath);
+                    // If there is no dll in the path, then attempt to load it
+                    // from program files
+                    if (_windowsDll.IsInvalid)
+                    {
+                        _windowsDll.Dispose();
+                        string programFilesDirectory = Environment.ExpandEnvironmentVariables("%ProgramW6432%");
+                        string dllPath = Path.Combine(programFilesDirectory, @"NVIDIA Corporation\NVSMI", WindowsDllName);
+
+                        _windowsDll = PInvoke.LoadLibrary(dllPath);
+                    }
+
+                    IsAvailable = !_windowsDll.IsInvalid && InitialiseDelegates() && (_windowsNvmlInit() == NvmlReturn.Success);
                 }
 
-                IsAvailable = !_windowsDll.IsInvalid && InitialiseDelegates() && (_windowsNvmlInit() == NvmlReturn.Success);
+                return IsAvailable;
             }
-
-            return IsAvailable;
+            finally
+            {
+                if (!IsAvailable) { _windowsDll?.Dispose(); _windowsDll = null; }
+            }
         }
     }
 
@@ -263,149 +272,172 @@ internal static class NvidiaML
         {
             if (IsAvailable)
             {
-                if (Software.OperatingSystem.IsUnix)
+                NvmlReturn result = Software.OperatingSystem.IsUnix ? nvmlShutdown() : _windowsNvmlShutdown();
+                if (result != NvmlReturn.Success)
                 {
-                    nvmlShutdown();
+                    System.Diagnostics.Debug.WriteLine("NVML shutdown rejected: " + result);
+                    return; // Keep ownership and the DLL if the native library refuses shutdown.
                 }
-                else if (!_windowsDll.IsInvalid)
-                {
-                    _windowsNvmlShutdown();
-                    _windowsDll.Dispose();
-                }
-
-                IsAvailable = false;
             }
+            IsAvailable = false;
+            _windowsDll?.Dispose(); _windowsDll = null;
+        }
+    }
+
+    internal static NvmlReturn TryGetPowerUsage(NvmlDevice device, out int power)
+    {
+        lock (_syncRoot)
+        {
+            power = 0;
+            if (!IsAvailable) return NvmlReturn.Uninitialized;
+            return Software.OperatingSystem.IsUnix ? nvmlDeviceGetPowerUsage(device, out power) :
+                _windowsNvmlDeviceGetPowerUsage(device, out power);
         }
     }
 
     public static NvmlDevice? NvmlDeviceGetHandleByIndex(int index)
     {
-        if (IsAvailable)
+        lock (_syncRoot)
         {
-            NvmlDevice nvmlDevice;
-            if (Software.OperatingSystem.IsUnix)
+            if (IsAvailable)
             {
-                try
+                NvmlDevice nvmlDevice;
+                if (Software.OperatingSystem.IsUnix)
                 {
-                    if (nvmlDeviceGetHandleByIndex(index, out nvmlDevice) == NvmlReturn.Success)
-                        return nvmlDevice;
+                    try
+                    {
+                        if (nvmlDeviceGetHandleByIndex(index, out nvmlDevice) == NvmlReturn.Success)
+                            return nvmlDevice;
+                    }
+                    catch (EntryPointNotFoundException)
+                    {
+                        if (nvmlDeviceGetHandleByIndexLegacy(index, out nvmlDevice) == NvmlReturn.Success)
+                            return nvmlDevice;
+                    }
                 }
-                catch (EntryPointNotFoundException)
+                else
                 {
-                    if (nvmlDeviceGetHandleByIndexLegacy(index, out nvmlDevice) == NvmlReturn.Success)
-                        return nvmlDevice;
+                    try
+                    {
+                        if (_windowsNvmlDeviceGetHandleByIndex(index, out nvmlDevice) == NvmlReturn.Success)
+                            return nvmlDevice;
+                    }
+                    catch { }
                 }
             }
-            else
-            {
-                try
-                {
-                    if (_windowsNvmlDeviceGetHandleByIndex(index, out nvmlDevice) == NvmlReturn.Success)
-                        return nvmlDevice;
-                }
-                catch { }
-            }
-        }
 
-        return null;
+            return null;
+        }
     }
 
     public static NvmlDevice? NvmlDeviceGetHandleByPciBusId(string pciBusId)
     {
-        if (IsAvailable)
+        lock (_syncRoot)
         {
-            NvmlDevice nvmlDevice;
-            if (Software.OperatingSystem.IsUnix)
+            if (IsAvailable)
             {
-                if (nvmlDeviceGetHandleByPciBusId(pciBusId, out nvmlDevice) == NvmlReturn.Success)
-                    return nvmlDevice;
-            }
-            else
-            {
-                try
+                NvmlDevice nvmlDevice;
+                if (Software.OperatingSystem.IsUnix)
                 {
-                    if (_windowsNvmlDeviceGetHandleByPciBusId(pciBusId, out nvmlDevice) == NvmlReturn.Success)
+                    if (nvmlDeviceGetHandleByPciBusId(pciBusId, out nvmlDevice) == NvmlReturn.Success)
                         return nvmlDevice;
                 }
-                catch { }
+                else
+                {
+                    try
+                    {
+                        if (_windowsNvmlDeviceGetHandleByPciBusId(pciBusId, out nvmlDevice) == NvmlReturn.Success)
+                            return nvmlDevice;
+                    }
+                    catch { }
+                }
             }
-        }
 
-        return null;
+            return null;
+        }
     }
 
     public static int? NvmlDeviceGetPowerUsage(NvmlDevice nvmlDevice)
     {
-        if (IsAvailable)
+        lock (_syncRoot)
         {
-            int powerUsage;
-            if (Software.OperatingSystem.IsUnix)
+            if (IsAvailable)
             {
-                if (nvmlDeviceGetPowerUsage(nvmlDevice, out powerUsage) == NvmlReturn.Success)
-                    return powerUsage;
-            }
-            else
-            {
-                try
+                int powerUsage;
+                if (Software.OperatingSystem.IsUnix)
                 {
-                    if (_windowsNvmlDeviceGetPowerUsage(nvmlDevice, out powerUsage) == NvmlReturn.Success)
+                    if (nvmlDeviceGetPowerUsage(nvmlDevice, out powerUsage) == NvmlReturn.Success)
                         return powerUsage;
                 }
-                catch { }
+                else
+                {
+                    try
+                    {
+                        if (_windowsNvmlDeviceGetPowerUsage(nvmlDevice, out powerUsage) == NvmlReturn.Success)
+                            return powerUsage;
+                    }
+                    catch { }
+                }
             }
-        }
 
-        return null;
+            return null;
+        }
     }
 
     public static uint? NvmlDeviceGetPcieThroughput(NvmlDevice nvmlDevice, NvmlPcieUtilCounter counter)
     {
-        if (IsAvailable)
+        lock (_syncRoot)
         {
-            uint pcieThroughput;
-            if (Software.OperatingSystem.IsUnix)
+            if (IsAvailable)
             {
-                if (nvmlDeviceGetPcieThroughput(nvmlDevice, counter, out pcieThroughput) == NvmlReturn.Success)
-                    return pcieThroughput;
-            }
-            else
-            {
-                try
+                uint pcieThroughput;
+                if (Software.OperatingSystem.IsUnix)
                 {
-                    if (_windowsNvmlDeviceGetPcieThroughputDelegate(nvmlDevice, counter, out pcieThroughput) == NvmlReturn.Success)
+                    if (nvmlDeviceGetPcieThroughput(nvmlDevice, counter, out pcieThroughput) == NvmlReturn.Success)
                         return pcieThroughput;
                 }
-                catch { }
+                else
+                {
+                    try
+                    {
+                        if (_windowsNvmlDeviceGetPcieThroughputDelegate(nvmlDevice, counter, out pcieThroughput) == NvmlReturn.Success)
+                            return pcieThroughput;
+                    }
+                    catch { }
+                }
             }
-        }
 
-        return null;
+            return null;
+        }
     }
 
     public static NvmlPciInfo? NvmlDeviceGetPciInfo(NvmlDevice nvmlDevice)
     {
-        if (IsAvailable)
+        lock (_syncRoot)
         {
-            var pci = new NvmlPciInfo();
+            if (IsAvailable)
+            {
+                var pci = new NvmlPciInfo();
 
-            if (Software.OperatingSystem.IsUnix)
-            {
-                if (nvmlDeviceGetPciInfo(nvmlDevice, ref pci) == NvmlReturn.Success)
-                    return pci;
-            }
-            else
-            {
-                try
+                if (Software.OperatingSystem.IsUnix)
                 {
-                    if (_windowsNvmlDeviceGetPciInfo(nvmlDevice, ref pci) == NvmlReturn.Success)
+                    if (nvmlDeviceGetPciInfo(nvmlDevice, ref pci) == NvmlReturn.Success)
                         return pci;
                 }
-                catch { }
+                else
+                {
+                    try
+                    {
+                        if (_windowsNvmlDeviceGetPciInfo(nvmlDevice, ref pci) == NvmlReturn.Success)
+                            return pci;
+                    }
+                    catch { }
 
+                }
             }
-        }
 
-        return null;
+            return null;
+        }
     }
 
     [DllImport(LinuxDllName, EntryPoint = "nvmlInit_v2", ExactSpelling = true)]
