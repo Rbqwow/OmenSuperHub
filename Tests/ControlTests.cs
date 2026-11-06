@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
+using OmenSuperHub;
 using OmenSuperHub.Control;
 
 internal static partial class ControlTests {
@@ -175,24 +177,61 @@ internal static partial class ControlTests {
   private static FanCurve CoolingCurve() {
     return new FanCurve(new[] { new KeyValuePair<float, int>(65, 3000), new KeyValuePair<float, int>(95, 6400) });
   }
+  private static FanCurve ConstantCurve(int rpm) {
+    return new FanCurve(new[] { new KeyValuePair<float, int>(0, rpm), new KeyValuePair<float, int>(100, rpm) });
+  }
   private static void MissingInitialTemperatureDoesNotDisableCooling() {
     var clock = new Clock(); var writer = new Writer(); var dispatcher = Create(writer, clock);
     var controller = new FanController(clock);
     var curve = CoolingCurve();
     dispatcher.Submit(Target(1), waitForFan: true);
-    var decision = controller.Evaluate(1, "auto", null, null, null, null, null, null, curve, curve);
+    var decision = controller.Evaluate(1, "auto", null, null, null, null, null, null, curve, curve, curve, curve);
     dispatcher.SubmitFan(1, 0, decision.Mode, null);
     Settle(dispatcher, clock);
     Check(!writer.Calls.Any(c => c.Kind == CommandKind.FanMax && c.Value == "0"), "Startup disables cooling before a usable fan speed exists.");
     clock.Milliseconds = 5000;
-    decision = controller.Evaluate(1, "auto", null, null, null, null, null, null, curve, curve);
+    decision = controller.Evaluate(1, "auto", null, null, null, null, null, null, curve, curve, curve, curve);
     dispatcher.SubmitFan(1, 0, decision.Mode, null); dispatcher.Drain();
     Check(dispatcher.Applied(CommandKind.FanMax) == "1", "Missing temperatures did not enable the cooling failsafe.");
     clock.Milliseconds = 6000;
-    decision = controller.Evaluate(1, "auto", null, null, new Reading(50, 6000), 50, null, null, curve, curve);
-    Check(decision.Rpm == 3000, "A fresh temperature below the first curve point must retain the curve's minimum RPM.");
+    decision = controller.Evaluate(1, "auto", null, null, new Reading(50, 6000), 50, null, null, curve, curve, curve, curve);
+    Check(decision.Fan1Rpm == 3000 && decision.Fan2Rpm == 3000, "A fresh temperature below the first curve point must retain the curve's minimum RPM.");
     dispatcher.SubmitFan(1, 1, decision.Mode, "30,30,0,0"); dispatcher.Drain();
     Check(dispatcher.Applied(CommandKind.FanSpeed) == "30,30,0,0", "Cooling did not recover after temperatures became available.");
+  }
+  private static void IndependentFanCurves() {
+    var clock = new Clock { Milliseconds = 6000 };
+    var controller = new FanController(clock);
+    var decision = controller.Evaluate(1, "auto", null, null,
+      new Reading(75, 6000), 75, new Reading(75, 6000), 75,
+      ConstantCurve(3000), ConstantCurve(2000), ConstantCurve(2500), ConstantCurve(4500));
+    Check(decision.Fan1Rpm == 3000 && decision.Fan2Rpm == 4500,
+      "Each physical fan must use the maximum of its own CPU and GPU curve.");
+  }
+  private static void FanProfilesPreserveBothFanSpeedsAcrossFormats() {
+    string path = Path.GetTempFileName();
+    try {
+      var profile = new FanCurveProfile(
+        new[] { new FanCurvePoint(30, 1000, 1200), new FanCurvePoint(90, 5000, 6000) },
+        new[] { new FanCurvePoint(20, 900, 1100), new FanCurvePoint(80, 4500, 5500) });
+      profile.Save(path);
+      FanCurveProfile loaded = FanCurveProfile.Load(path);
+      Check(loaded.CpuPoints[1].Fan1Speed == 5000 && loaded.CpuPoints[1].Fan2Speed == 6000 &&
+        loaded.GpuPoints[1].Fan1Speed == 4500 && loaded.GpuPoints[1].Fan2Speed == 5500,
+        "The new profile format did not preserve both fan speed curves.");
+
+      File.WriteAllLines(path, new[] {
+        "CPU,Fan1,Fan2,GPU,Fan1,Fan2",
+        "30,1000,1200,20,900,1100",
+        "90,5000,6000,80,4500,5500"
+      });
+      loaded = FanCurveProfile.Load(path);
+      Check(loaded.CpuPoints[1].Fan1Speed == 5000 && loaded.CpuPoints[1].Fan2Speed == 6000 &&
+        loaded.GpuPoints[1].Fan1Speed == 4500 && loaded.GpuPoints[1].Fan2Speed == 5500,
+        "The legacy CSV profile did not preserve both fan speed columns.");
+    } finally {
+      File.Delete(path);
+    }
   }
   private static void StableCoolingOnlyRenewsFirmwareLease() {
     foreach (string mode in new[] { "speed", "max" }) {
@@ -361,7 +400,7 @@ internal static partial class ControlTests {
       SameFanModeCanBeReappliedIndependently, NewTargetDuringSettleKeepsDeadline,
       RejectedModeRetriesAndKeepsCooling, ReapplyWaitsForMatchingFanDecision,
       SupersededWriteIsNotReportedAsBiosFailure, AutomaticTimerCompletesDelayedSettings,
-      MissingInitialTemperatureDoesNotDisableCooling, StableCoolingOnlyRenewsFirmwareLease,
+      MissingInitialTemperatureDoesNotDisableCooling, IndependentFanCurves, FanProfilesPreserveBothFanSpeedsAcrossFormats, StableCoolingOnlyRenewsFirmwareLease,
       OneStoppedFanReappliesSpeedWithoutResettingMode,
       MaximumCoolingIsVerifiedAgainstActualRpm, FeedbackIgnoresStaleSamplesSpinUpAndIntentionalStop,
       MissingTemperatureStopsCleaningSafely, HoldPreservesExistingFanTarget,

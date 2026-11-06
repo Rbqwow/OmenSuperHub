@@ -11,6 +11,8 @@
     <Compile Include="../App/Control/FanController.cs" Link="Control/FanController.cs" />
     <Compile Include="../App/Control/Monitoring.cs" Link="Control/Monitoring.cs" />
     <Compile Include="../App/Control/NativeBiosWmi.cs" Link="Control/NativeBiosWmi.cs" />
+    <Compile Include="../FanCurveProfile.cs" Link="FanCurveProfile.cs" />
+    <Compile Include="FanCurveTestStrings.cs" />
     <Compile Include="ControlTests.cs" />
     <Compile Include="NativeBiosTests.cs" />
   </ItemGroup>

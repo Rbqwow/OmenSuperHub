@@ -407,130 +407,54 @@ namespace OmenSuperHub {
       bool useSilentDefaults = filePath.IndexOf("silent", StringComparison.OrdinalIgnoreCase) >= 0;
       FanCurveProfile profile = CreateDefaultFanCurveProfile(useSilentDefaults);
       profile.Save(filePath);
-      LoadFanConfigFromLists(
-          profile.CpuPoints.Select(point => point.Temperature).ToList(),
-          profile.CpuPoints.Select(point => point.FanSpeed).ToList(),
-          profile.GpuPoints.Select(point => point.Temperature).ToList(),
-          profile.GpuPoints.Select(point => point.FanSpeed).ToList());
+      LoadFanConfigFromProfile(profile);
     }
 
     static void LoadFanConfig(string filePath) {
       string absoluteFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, filePath);
       if (!File.Exists(absoluteFilePath)) {
-        //Logger.Info($"{absoluteFilePath} not found.");
         LoadDefaultFanConfig(absoluteFilePath);
         return;
       }
 
-      string[] allLines = File.ReadAllLines(absoluteFilePath);
-      if (allLines.Length == 0) {
+      try {
+        string[] allLines = File.ReadAllLines(absoluteFilePath);
+        if (allLines.Length == 0)
+          throw new InvalidDataException(Strings.FanCurveInvalidFile);
+
+        FanCurveProfile profile = FanCurveProfile.Load(absoluteFilePath);
+        // Upgrade the pre-v1.9 style CSV while preserving both fan columns.
+        if (!allLines[0].Contains("=")) profile.Save(absoluteFilePath);
+        LoadFanConfigFromProfile(profile);
+      } catch (Exception ex) when (
+          ex is IOException ||
+          ex is UnauthorizedAccessException ||
+          ex is InvalidDataException) {
+        Logger.Error($"{absoluteFilePath} fan profile invalid ({ex.Message}), regenerating.");
         LoadDefaultFanConfig(absoluteFilePath);
-        return;
-      }
-
-      // 判断文件格式：若第一行包含'='则视为新格式，否则为旧CSV格式
-      bool isNewFormat = allLines[0].Contains('=');
-
-      if (isNewFormat) {
-        var cpuTempList = new List<int>();
-        var cpuSpeedList = new List<int>();
-        var gpuTempList = new List<int>();
-        var gpuSpeedList = new List<int>();
-
-        foreach (string line in allLines) {
-          if (string.IsNullOrWhiteSpace(line)) continue;
-          int eqIdx = line.IndexOf('=');
-          if (eqIdx < 0) continue;
-          string key = line.Substring(0, eqIdx).Trim();
-          string valueStr = line.Substring(eqIdx + 1).Trim();
-          var values = valueStr.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                               .Select(s => int.Parse(s.Trim()))
-                               .ToList();
-
-          switch (key) {
-            case "Fan_Table_CPU_Temperature_List":
-              cpuTempList = values;
-              break;
-            case "Fan_Table_CPU_Fan_Speed_List":
-              cpuSpeedList = values;
-              break;
-            case "Fan_Table_GPU_Temperature_List":
-              gpuTempList = values;
-              break;
-            case "Fan_Table_GPU_Fan_Speed_List":
-              gpuSpeedList = values;
-              break;
-          }
-        }
-
-        // 校验数据完整性
-        if (cpuTempList.Count == 0 || cpuSpeedList.Count == 0 ||
-            gpuTempList.Count == 0 || gpuSpeedList.Count == 0 ||
-            cpuTempList.Count != cpuSpeedList.Count ||
-            gpuTempList.Count != gpuSpeedList.Count) {
-          Logger.Error($"{absoluteFilePath} invalid new format, regenerating.");
-          LoadDefaultFanConfig(absoluteFilePath);
-          return;
-        }
-
-        LoadFanConfigFromLists(cpuTempList, cpuSpeedList, gpuTempList, gpuSpeedList);
-      } else {
-        // 旧格式：CPU,Fan1,Fan2,GPU,Fan1,Fan2 多行
-        var cpuTempList = new List<int>();
-        var cpuSpeedList = new List<int>();
-        var gpuTempList = new List<int>();
-        var gpuSpeedList = new List<int>();
-
-        try {
-          for (int i = 1; i < allLines.Length; i++) // 跳过标题行
-          {
-            var parts = allLines[i].Split(',');
-            if (parts.Length < 6) continue;
-            int cpuTemp = int.Parse(parts[0].Trim());
-            int cpuFan1 = int.Parse(parts[1].Trim()); // 我们取Fan1作为统一速度
-            int gpuTemp = int.Parse(parts[3].Trim());
-            int gpuFan1 = int.Parse(parts[4].Trim());
-
-            cpuTempList.Add(cpuTemp);
-            cpuSpeedList.Add(cpuFan1);
-            gpuTempList.Add(gpuTemp);
-            gpuSpeedList.Add(gpuFan1);
-          }
-        } catch {
-          Logger.Error($"{absoluteFilePath} parse error, regenerating.");
-          LoadDefaultFanConfig(absoluteFilePath);
-          return;
-        }
-
-        if (cpuTempList.Count == 0 || gpuTempList.Count == 0) {
-          LoadDefaultFanConfig(absoluteFilePath);
-          return;
-        }
-
-        // 将旧格式转换为新格式并覆盖写入
-        var newLines = new List<string>
-        {
-            "Fan_Table_CPU_Temperature_List=" + string.Join(",", cpuTempList),
-            "Fan_Table_CPU_Fan_Speed_List=" + string.Join(",", cpuSpeedList),
-            "Fan_Table_GPU_Temperature_List=" + string.Join(",", gpuTempList),
-            "Fan_Table_GPU_Fan_Speed_List=" + string.Join(",", gpuSpeedList)
-        };
-        File.WriteAllLines(absoluteFilePath, newLines);
-
-        LoadFanConfigFromLists(cpuTempList, cpuSpeedList, gpuTempList, gpuSpeedList);
       }
     }
 
-    static void LoadFanConfigFromLists(List<int> cpuTempList, List<int> cpuSpeedList,
-                                   List<int> gpuTempList, List<int> gpuSpeedList) {
-      var cpuMap = new SortedDictionary<float, int>();
-      var gpuMap = new SortedDictionary<float, int>();
-      for (int i = 0; i < cpuTempList.Count; i++) cpuMap[cpuTempList[i]] = cpuSpeedList[i];
-      for (int i = 0; i < gpuTempList.Count; i++) gpuMap[gpuTempList[i]] = gpuSpeedList[i];
-      CPUTempFanMap = cpuMap; GPUTempFanMap = gpuMap;
+    static void LoadFanConfigFromProfile(FanCurveProfile profile) {
+      var cpuFan1Map = new SortedDictionary<float, int>();
+      var cpuFan2Map = new SortedDictionary<float, int>();
+      var gpuFan1Map = new SortedDictionary<float, int>();
+      var gpuFan2Map = new SortedDictionary<float, int>();
+      foreach (FanCurvePoint point in profile.CpuPoints) {
+        cpuFan1Map[point.Temperature] = point.Fan1Speed;
+        cpuFan2Map[point.Temperature] = point.Fan2Speed;
+      }
+      foreach (FanCurvePoint point in profile.GpuPoints) {
+        gpuFan1Map[point.Temperature] = point.Fan1Speed;
+        gpuFan2Map[point.Temperature] = point.Fan2Speed;
+      }
+      CPUTempFanMap = cpuFan1Map;
+      CPUTempFan2Map = cpuFan2Map;
+      GPUTempFanMap = gpuFan1Map;
+      GPUTempFan2Map = gpuFan2Map;
     }
 
-    // Get fan speed for CPU and GPU and return the maximum
+    // Each physical fan uses the maximum of its own CPU and GPU curve.
     // 使用平滑后的温度查表，保证高中低档响应速度生效；实时档下平滑温度==原始温度
     // 只有对应监控开启且温度已完成初始化时，才参与风扇转速计算
     static bool IsBuiltInPreset(string presetKey) {

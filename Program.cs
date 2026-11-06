@@ -56,8 +56,11 @@ namespace OmenSuperHub {
     static string pawnIOState = "";
     static string tempDisplayMode = "smoothed"; // 温度显示方式：smoothed=平滑值, raw=原始值
     static int? platformMaxFanSpeed = null; // 平台最大转速（RPM），由LoadDefaultFanConfig获取后缓存
+    // Fan 1 uses the original map names for compatibility; Fan 2 has parallel maps.
     static SortedDictionary<float, int> CPUTempFanMap = new SortedDictionary<float, int>();
+    static SortedDictionary<float, int> CPUTempFan2Map = new SortedDictionary<float, int>();
     static SortedDictionary<float, int> GPUTempFanMap = new SortedDictionary<float, int>();
+    static SortedDictionary<float, int> GPUTempFan2Map = new SortedDictionary<float, int>();
     static System.Threading.Timer fanControlTimer;
     static System.Timers.Timer tooltipUpdateTimer; // Timer for updating tooltip
     static NotifyIcon trayIcon;

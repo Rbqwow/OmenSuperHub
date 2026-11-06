@@ -132,10 +132,13 @@
     public static string FanCurveEditorTitle => T("风扇曲线", "風扇曲線", " Fan Curves");
     public static string FanCurveTemperatureAxis => T("温度 (℃)", "溫度 (℃)", "Temperature (℃)");
     public static string FanCurveFanSpeedAxis => T("风扇转速 (RPM)", "風扇轉速 (RPM)", "Fan Speed (RPM)");
+    public static string FanCurveFan1 => T("风扇 1", "風扇 1", "Fan 1");
+    public static string FanCurveFan2 => T("风扇 2", "風扇 2", "Fan 2");
+    public static string FanCurveEditFan => T("编辑风扇曲线", "編輯風扇曲線", "Edit fan curve");
     public static string FanCurveInstructions => T(
-        "左键空白处增加节点；拖动节点调整；右键节点删除（至少保留两个节点）。",
-        "左鍵空白處新增節點；拖曳節點調整；右鍵節點刪除（至少保留兩個節點）。",
-        "Left-click empty space to add; drag to adjust; right-click to delete (keep at least two points).");
+        "蓝/橙曲线分别控制两个风扇；左键空白处增加节点；拖动节点调整；右键节点删除（每个风扇至少保留两个节点）。",
+        "藍/橙曲線分別控制兩個風扇；左鍵空白處新增節點；拖曳節點調整；右鍵節點刪除（每個風扇至少保留兩個節點）。",
+        "Blue/orange curves control Fan 1/Fan 2; left-click to add, drag to adjust, right-click to delete (keep at least two points per fan).");
     public static string FanCurveSave => T("保存", "儲存", "Save");
     public static string FanCurveSaveAndApply => T("保存并应用", "儲存並套用", "Save & Apply");
     public static string FanCurveCancel => T("取消", "取消", "Cancel");

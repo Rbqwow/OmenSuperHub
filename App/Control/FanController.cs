@@ -19,12 +19,15 @@ namespace OmenSuperHub.Control {
   }
   internal sealed class FanDecision {
     public readonly string Mode;
-    public readonly int? Rpm;
+    public readonly int? Fan1Rpm;
+    public readonly int? Fan2Rpm;
     public readonly bool Protecting;
     public readonly bool CanReportRecovery;
-    internal FanDecision(string mode, int? rpm, bool protecting, bool canReportRecovery = false) {
-      Mode = mode; Rpm = rpm; Protecting = protecting; CanReportRecovery = canReportRecovery;
+    internal FanDecision(string mode, int? fan1Rpm, int? fan2Rpm, bool protecting, bool canReportRecovery = false) {
+      Mode = mode; Fan1Rpm = fan1Rpm; Fan2Rpm = fan2Rpm;
+      Protecting = protecting; CanReportRecovery = canReportRecovery;
     }
+    internal bool HasSpeed { get { return Fan1Rpm.HasValue && Fan2Rpm.HasValue; } }
   }
   internal sealed class FanController {
     private readonly IClock clock;
@@ -32,19 +35,27 @@ namespace OmenSuperHub.Control {
     private bool protecting;
     internal FanController(IClock clock) { this.clock = clock; }
     internal FanDecision Evaluate(long generation, string userMode, int? fixedRpm, string cleaning,
-      Reading cpu, float? cpuSmoothed, Reading gpu, float? gpuSmoothed, FanCurve cpuCurve, FanCurve gpuCurve) {
+      Reading cpu, float? cpuSmoothed, Reading gpu, float? gpuSmoothed,
+      FanCurve cpuFan1Curve, FanCurve cpuFan2Curve, FanCurve gpuFan1Curve, FanCurve gpuFan2Curve) {
       long now = clock.Milliseconds;
       if (this.generation != generation) {
         this.generation = generation; invalidSince = now; protecting = false;
       }
-      int? rpm = null;
-      if (cpu != null && cpu.Fresh(now) && cpuSmoothed.HasValue) rpm = cpuCurve.Speed(cpuSmoothed.Value);
-      if (gpu != null && gpu.Fresh(now) && gpuSmoothed.HasValue) {
-        int? gpuRpm = gpuCurve.Speed(gpuSmoothed.Value);
-        if (gpuRpm.HasValue) rpm = Math.Max(rpm ?? 0, gpuRpm.Value);
+      int? fan1Rpm = null;
+      int? fan2Rpm = null;
+      if (cpu != null && cpu.Fresh(now) && cpuSmoothed.HasValue) {
+        fan1Rpm = cpuFan1Curve.Speed(cpuSmoothed.Value);
+        fan2Rpm = cpuFan2Curve.Speed(cpuSmoothed.Value);
       }
+      if (gpu != null && gpu.Fresh(now) && gpuSmoothed.HasValue) {
+        int? gpuFan1Rpm = gpuFan1Curve.Speed(gpuSmoothed.Value);
+        int? gpuFan2Rpm = gpuFan2Curve.Speed(gpuSmoothed.Value);
+        if (gpuFan1Rpm.HasValue) fan1Rpm = Math.Max(fan1Rpm ?? 0, gpuFan1Rpm.Value);
+        if (gpuFan2Rpm.HasValue) fan2Rpm = Math.Max(fan2Rpm ?? 0, gpuFan2Rpm.Value);
+      }
+      bool hasRpm = fan1Rpm.HasValue && fan2Rpm.HasValue;
       if (userMode == "auto") {
-        if (rpm.HasValue) {
+        if (hasRpm) {
           invalidSince = -1; protecting = false;
         } else {
           if (invalidSince < 0) {
@@ -54,13 +65,14 @@ namespace OmenSuperHub.Control {
           protecting = now - invalidSince >= 5000;
         }
       } else protecting = false;
-      if (protecting) return new FanDecision("max", null, true);
-      if (cleaning != null) return new FanDecision(cleaning, null, false, userMode == "auto" && rpm.HasValue);
-      if (userMode == "max") return new FanDecision("max", null, false);
+      if (protecting) return new FanDecision("max", null, null, true);
+      if (cleaning != null) return new FanDecision(cleaning, null, null, false, userMode == "auto" && hasRpm);
+      if (userMode == "max") return new FanDecision("max", null, null, false);
       // Until a usable sample arrives, keep the existing cooling state. Turning off
-      // maximum cooling without a replacement speed can leave the EC at zero RPM.
-      if (userMode == "auto" && !rpm.HasValue) return new FanDecision("hold", null, false);
-      return new FanDecision("speed", userMode == "auto" ? rpm : fixedRpm, false, userMode == "auto" && rpm.HasValue);
+      // maximum cooling without replacement speeds can leave the EC at zero RPM.
+      if (userMode == "auto" && !hasRpm) return new FanDecision("hold", null, null, false);
+      return new FanDecision("speed", userMode == "auto" ? fan1Rpm : fixedRpm,
+        userMode == "auto" ? fan2Rpm : fixedRpm, false, userMode == "auto" && hasRpm);
     }
     private static long LostAt(Reading reading, long now) {
       if (reading == null) return -1;

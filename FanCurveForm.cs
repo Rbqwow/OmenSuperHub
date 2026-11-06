@@ -14,7 +14,9 @@ namespace OmenSuperHub {
   }
 
   public sealed class FanCurveForm : Form {
-    private const string SeriesName = "FanSpeed";
+    private const string Fan1SeriesName = "Fan1Speed";
+    private const string Fan2SeriesName = "Fan2Speed";
+    private static readonly string[] SeriesNames = { Fan1SeriesName, Fan2SeriesName };
     private const int PointHitRadius = 12;
     private const int PointHitRadiusSquared = PointHitRadius * PointHitRadius;
 
@@ -22,7 +24,9 @@ namespace OmenSuperHub {
     private static readonly Color CardBackColor = Color.White;
     private static readonly Color BorderColor = Color.FromArgb(220, 225, 230);
     private static readonly Color AccentColor = Color.FromArgb(0, 122, 204);
+    private static readonly Color Fan2Color = Color.FromArgb(230, 126, 34);
     private static readonly Color MarkerColor = Color.FromArgb(220, 53, 69);
+    private static readonly Color Fan2MarkerColor = Color.FromArgb(211, 84, 0);
     private static readonly Color GridColor = Color.FromArgb(232, 236, 240);
     private static readonly Color AxisLineColor = Color.FromArgb(200, 205, 210);
 
@@ -33,8 +37,10 @@ namespace OmenSuperHub {
     private readonly int fanSpeedMaximum;
     private readonly string customFilePath;
     private readonly ToolTip pointToolTip;
+    private ComboBox fanSeriesCombo;
 
     private Chart draggingChart;
+    private string draggingSeriesName;
     private DataPoint draggingPoint;
 
     internal FanCurveEditorResult EditorResult { get; private set; }
@@ -165,6 +171,25 @@ namespace OmenSuperHub {
       cancelButton = CreateActionButton(Strings.FanCurveCancel);
       loadButton = CreateActionButton(Strings.FanCurveLoad);
 
+      var fanSelectorLabel = new Label {
+        Text = Strings.FanCurveEditFan,
+        AutoSize = true,
+        ForeColor = Color.FromArgb(70, 70, 70),
+        Font = new Font(Font.FontFamily, 11F, FontStyle.Bold),
+        Margin = new Padding(0, 0, 0, 6)
+      };
+      fanSeriesCombo = new ComboBox {
+        Width = 190,
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        Font = new Font(Font.FontFamily, 11F, FontStyle.Regular),
+        Margin = new Padding(0, 0, 0, 16)
+      };
+      fanSeriesCombo.Items.Add(Strings.FanCurveFan1);
+      fanSeriesCombo.Items.Add(Strings.FanCurveFan2);
+      fanSeriesCombo.SelectedIndex = 0;
+
+      inner.Controls.Add(fanSelectorLabel);
+      inner.Controls.Add(fanSeriesCombo);
       inner.Controls.Add(saveButton);
       inner.Controls.Add(saveAndApplyButton);
       inner.Controls.Add(cancelButton);
@@ -231,19 +256,16 @@ namespace OmenSuperHub {
       chartArea.AxisY.TitleFont = new Font(Font.FontFamily, 12F, FontStyle.Bold);
 
       chart.ChartAreas.Add(chartArea);
+      chart.Legends.Add(new Legend("FanLegend") {
+        Docking = Docking.Top,
+        Alignment = StringAlignment.Center,
+        BackColor = PageBackColor,
+        BorderColor = BorderColor,
+        Font = new Font(Font.FontFamily, 10F, FontStyle.Bold)
+      });
 
-      var series = new Series(SeriesName) {
-        ChartType = SeriesChartType.Line,
-        BorderWidth = 3,
-        Color = AccentColor,
-        MarkerStyle = MarkerStyle.Circle,
-        MarkerSize = 8,
-        MarkerColor = MarkerColor,
-        MarkerBorderColor = CardBackColor,
-        MarkerBorderWidth = 1,
-        ToolTip = "#VALX°C, #VALY RPM"
-      };
-      chart.Series.Add(series);
+      AddFanSeries(chart, Fan1SeriesName, Strings.FanCurveFan1, AccentColor, MarkerColor);
+      AddFanSeries(chart, Fan2SeriesName, Strings.FanCurveFan2, Fan2Color, Fan2MarkerColor);
 
       chart.MouseDown += Chart_MouseDown;
       chart.MouseMove += Chart_MouseMove;
@@ -251,6 +273,21 @@ namespace OmenSuperHub {
       chart.MouseLeave += (sender, args) => pointToolTip.Hide(chart);
 
       return chart;
+    }
+
+    private static void AddFanSeries(Chart chart, string name, string displayName, Color color, Color markerColor) {
+      chart.Series.Add(new Series(name) {
+        ChartType = SeriesChartType.Line,
+        BorderWidth = 3,
+        Color = color,
+        MarkerStyle = MarkerStyle.Circle,
+        MarkerSize = 8,
+        MarkerColor = markerColor,
+        MarkerBorderColor = CardBackColor,
+        MarkerBorderWidth = 1,
+        LegendText = displayName,
+        ToolTip = displayName + ": #VALX°C, #VALY RPM"
+      });
     }
 
     private static int GetFanSpeedInterval(int maximum) {
@@ -266,11 +303,13 @@ namespace OmenSuperHub {
     }
 
     private static void SetSeriesPoints(Chart chart, IEnumerable<FanCurvePoint> points) {
-      Series series = chart.Series[SeriesName];
-      series.Points.Clear();
+      foreach (string seriesName in SeriesNames) {
+        chart.Series[seriesName].Points.Clear();
+      }
 
       foreach (FanCurvePoint point in points.OrderBy(item => item.Temperature)) {
-        series.Points.Add(CreateDataPoint(point.Temperature, point.FanSpeed));
+        chart.Series[Fan1SeriesName].Points.Add(CreateDataPoint(point.Temperature, point.Fan1Speed));
+        chart.Series[Fan2SeriesName].Points.Add(CreateDataPoint(point.Temperature, point.Fan2Speed));
       }
 
       chart.Invalidate();
@@ -288,12 +327,12 @@ namespace OmenSuperHub {
       Chart chart = sender as Chart;
       if (chart == null) return;
 
-      DataPoint point = FindPoint(chart, e.Location);
+      string seriesName;
+      DataPoint point = FindPoint(chart, e.Location, out seriesName);
 
       if (e.Button == MouseButtons.Right) {
-        if (point != null && chart.Series[SeriesName].Points.Count > 2) {
-          chart.Series[SeriesName].Points.Remove(point);
-          chart.Invalidate();
+        if (point != null && chart.Series[Fan1SeriesName].Points.Count > 2) {
+          RemovePointAtTemperature(chart, point.XValue);
         }
         return;
       }
@@ -301,9 +340,7 @@ namespace OmenSuperHub {
       if (e.Button != MouseButtons.Left) return;
 
       if (point != null) {
-        draggingChart = chart;
-        draggingPoint = point;
-        chart.Cursor = Cursors.SizeAll;
+        BeginDrag(chart, seriesName, point);
         return;
       }
 
@@ -314,19 +351,30 @@ namespace OmenSuperHub {
       int roundedTemperature = Clamp((int)Math.Round(temperature), 0, GetTemperatureMaximum(chart));
       int roundedFanSpeed = Clamp(RoundFanSpeed(fanSpeed), 0, fanSpeedMaximum);
 
-      DataPoint existingPoint = chart.Series[SeriesName].Points
-          .FirstOrDefault(candidate => (int)Math.Round(candidate.XValue) == roundedTemperature);
-
-      if (existingPoint != null) {
-        draggingChart = chart;
-        draggingPoint = existingPoint;
-        chart.Cursor = Cursors.SizeAll;
-        return;
+      foreach (string name in SeriesNames) {
+        DataPoint existingPoint = chart.Series[name].Points
+            .FirstOrDefault(candidate => (int)Math.Round(candidate.XValue) == roundedTemperature);
+        if (existingPoint != null) {
+          BeginDrag(chart, name, existingPoint);
+          return;
+        }
       }
 
-      DataPoint newPoint = CreateDataPoint(roundedTemperature, roundedFanSpeed);
-      InsertPointSorted(chart.Series[SeriesName].Points, newPoint);
+      string targetSeriesName = ActiveSeriesName;
+      foreach (string name in SeriesNames) {
+        int newFanSpeed = name == targetSeriesName
+            ? roundedFanSpeed
+            : Clamp(RoundFanSpeed(InterpolateSeriesSpeed(chart.Series[name], roundedTemperature)), 0, fanSpeedMaximum);
+        InsertPointSorted(chart.Series[name].Points, CreateDataPoint(roundedTemperature, newFanSpeed));
+      }
       chart.Invalidate();
+    }
+
+    private void BeginDrag(Chart chart, string seriesName, DataPoint point) {
+      chart.Cursor = Cursors.SizeAll;
+      draggingChart = chart;
+      draggingSeriesName = seriesName;
+      draggingPoint = point;
     }
 
     private void Chart_MouseMove(object sender, MouseEventArgs e) {
@@ -338,7 +386,8 @@ namespace OmenSuperHub {
         return;
       }
 
-      DataPoint point = FindPoint(chart, e.Location);
+      string seriesName;
+      DataPoint point = FindPoint(chart, e.Location, out seriesName);
       if (point == null) {
         pointToolTip.Hide(chart);
         chart.Cursor = Cursors.Cross;
@@ -347,6 +396,7 @@ namespace OmenSuperHub {
 
       chart.Cursor = Cursors.Hand;
       pointToolTip.Show(
+          chart.Series[seriesName].LegendText + ": " +
           $"{(int)Math.Round(point.XValue)}°C, {(int)Math.Round(point.YValues[0])} RPM",
           chart,
           e.X + 14,
@@ -358,6 +408,7 @@ namespace OmenSuperHub {
       Chart chart = sender as Chart;
       if (chart != null) chart.Cursor = Cursors.Cross;
       draggingChart = null;
+      draggingSeriesName = null;
       draggingPoint = null;
     }
 
@@ -365,11 +416,17 @@ namespace OmenSuperHub {
       double temperature;
       double fanSpeed;
       if (!TryGetChartValues(chart, location, out temperature, out fanSpeed)) return;
+      if (string.IsNullOrEmpty(draggingSeriesName)) return;
 
-      Series series = chart.Series[SeriesName];
+      Series series = chart.Series[draggingSeriesName];
+      Series otherSeries = chart.Series[GetOtherSeriesName(draggingSeriesName)];
       List<DataPoint> orderedPoints = series.Points.OrderBy(item => item.XValue).ToList();
       int pointIndex = orderedPoints.IndexOf(draggingPoint);
       if (pointIndex < 0) return;
+
+      double originalTemperature = draggingPoint.XValue;
+      DataPoint otherPoint = otherSeries.Points
+          .FirstOrDefault(item => Math.Abs(item.XValue - originalTemperature) < 0.1D);
 
       int minimumTemperature = pointIndex == 0
           ? 0
@@ -379,11 +436,31 @@ namespace OmenSuperHub {
           ? GetTemperatureMaximum(chart)
           : (int)Math.Round(orderedPoints[pointIndex + 1].XValue) - 1;
 
-      draggingPoint.XValue = Clamp((int)Math.Round(temperature), minimumTemperature, maximumTemperature);
+      int newTemperature = Clamp((int)Math.Round(temperature), minimumTemperature, maximumTemperature);
+      draggingPoint.XValue = newTemperature;
       draggingPoint.YValues[0] = Clamp(RoundFanSpeed(fanSpeed), 0, fanSpeedMaximum);
+      if (otherPoint != null) otherPoint.XValue = newTemperature;
 
       series.Points.Remove(draggingPoint);
       InsertPointSorted(series.Points, draggingPoint);
+      if (otherPoint != null) {
+        otherSeries.Points.Remove(otherPoint);
+        InsertPointSorted(otherSeries.Points, otherPoint);
+      }
+      chart.Invalidate();
+    }
+
+    private static string GetOtherSeriesName(string seriesName) {
+      return seriesName == Fan1SeriesName ? Fan2SeriesName : Fan1SeriesName;
+    }
+
+    private static void RemovePointAtTemperature(Chart chart, double temperature) {
+      int roundedTemperature = (int)Math.Round(temperature);
+      foreach (string name in SeriesNames) {
+        DataPoint point = chart.Series[name].Points
+            .FirstOrDefault(candidate => (int)Math.Round(candidate.XValue) == roundedTemperature);
+        if (point != null) chart.Series[name].Points.Remove(point);
+      }
       chart.Invalidate();
     }
 
@@ -395,21 +472,50 @@ namespace OmenSuperHub {
       points.Insert(insertIndex, newPoint);
     }
 
-    private DataPoint FindPoint(Chart chart, Point mouseLocation) {
-      foreach (DataPoint point in chart.Series[SeriesName].Points) {
+    private string ActiveSeriesName {
+      get { return fanSeriesCombo != null && fanSeriesCombo.SelectedIndex == 1 ? Fan2SeriesName : Fan1SeriesName; }
+    }
+
+    private DataPoint FindPoint(Chart chart, Point mouseLocation, out string seriesName) {
+      double ignoredDistance;
+      seriesName = ActiveSeriesName;
+      DataPoint point = FindPointInSeries(chart, mouseLocation, seriesName, out ignoredDistance);
+      if (point != null) return point;
+
+      seriesName = GetOtherSeriesName(ActiveSeriesName);
+      return FindPointInSeries(chart, mouseLocation, seriesName, out ignoredDistance);
+    }
+
+    private static DataPoint FindPointInSeries(Chart chart, Point mouseLocation, string seriesName, out double nearestDistanceSquared) {
+      DataPoint nearestPoint = null;
+      nearestDistanceSquared = double.MaxValue;
+      foreach (DataPoint point in chart.Series[seriesName].Points) {
         double pointX = chart.ChartAreas[0].AxisX.ValueToPixelPosition(point.XValue);
         double pointY = chart.ChartAreas[0].AxisY.ValueToPixelPosition(point.YValues[0]);
-
         double dx = pointX - mouseLocation.X;
         double dy = pointY - mouseLocation.Y;
         double distanceSquared = dx * dx + dy * dy;
-
-        if (distanceSquared <= PointHitRadiusSquared) {
-          return point;
+        if (distanceSquared <= PointHitRadiusSquared && distanceSquared < nearestDistanceSquared) {
+          nearestPoint = point;
+          nearestDistanceSquared = distanceSquared;
         }
       }
+      return nearestPoint;
+    }
 
-      return null;
+    private static double InterpolateSeriesSpeed(Series series, double temperature) {
+      List<DataPoint> points = series.Points.OrderBy(point => point.XValue).ToList();
+      if (points.Count == 0) return 0;
+      DataPoint low = points[0];
+      foreach (DataPoint high in points) {
+        if (temperature <= high.XValue) {
+          if (low.XValue == high.XValue) return low.YValues[0];
+          return low.YValues[0] +
+              (high.YValues[0] - low.YValues[0]) * (temperature - low.XValue) / (high.XValue - low.XValue);
+        }
+        low = high;
+      }
+      return low.YValues[0];
     }
 
     private static bool TryGetChartValues(Chart chart, Point location, out double xValue, out double yValue) {
@@ -481,12 +587,28 @@ namespace OmenSuperHub {
     }
 
     private static List<FanCurvePoint> GetPoints(Chart chart) {
-      return chart.Series[SeriesName].Points
-          .Select(point => new FanCurvePoint(
-              (int)Math.Round(point.XValue),
-              (int)Math.Round(point.YValues[0])))
-          .OrderBy(point => point.Temperature)
+      List<DataPoint> fan1Points = chart.Series[Fan1SeriesName].Points
+          .OrderBy(point => point.XValue)
           .ToList();
+      var fan2Speeds = new Dictionary<int, int>();
+      foreach (DataPoint point in chart.Series[Fan2SeriesName].Points) {
+        fan2Speeds[(int)Math.Round(point.XValue)] = (int)Math.Round(point.YValues[0]);
+      }
+      if (fan1Points.Count != fan2Speeds.Count)
+        throw new InvalidDataException(Strings.FanCurveOutOfRange);
+
+      var result = new List<FanCurvePoint>();
+      foreach (DataPoint point in fan1Points) {
+        int temperature = (int)Math.Round(point.XValue);
+        int fan2Speed;
+        if (!fan2Speeds.TryGetValue(temperature, out fan2Speed))
+          throw new InvalidDataException(Strings.FanCurveOutOfRange);
+        result.Add(new FanCurvePoint(
+            temperature,
+            (int)Math.Round(point.YValues[0]),
+            fan2Speed));
+      }
+      return result;
     }
 
     private void ValidateProfileForMachine(FanCurveProfile profile) {
@@ -496,7 +618,7 @@ namespace OmenSuperHub {
 
     private void ValidatePointsForMachine(IList<FanCurvePoint> points, int temperatureMaximum) {
       if (points.Count < 2 ||
-          points.Any(point => point.FanSpeed < 0) ||
+          points.Any(point => point.Fan1Speed < 0 || point.Fan2Speed < 0) ||
           points.GroupBy(point => point.Temperature).Any(group => group.Count() > 1)) {
         throw new InvalidDataException(Strings.FanCurveOutOfRange);
       }

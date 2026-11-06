@@ -21,14 +21,15 @@ namespace OmenSuperHub {
       internal readonly string FanMode, Cleaning;
       internal readonly bool Cpu, Gpu, Fan, Protect;
       internal readonly float Smoothing;
-      internal readonly FanCurve CpuCurve, GpuCurve;
+      internal readonly FanCurve CpuFan1Curve, CpuFan2Curve, GpuFan1Curve, GpuFan2Curve;
       internal readonly int? FixedRpm;
       internal RuntimeTarget() {
         Revision = settingsRevision; FanGeneration = fanGeneration; MonitorVersion = monitorVersion;
         FanMode = fanControl; Cleaning = cleaningMode;
         Cpu = monitorCPU; Gpu = monitorGPU; Fan = monitorFan; Protect = autoFanProtect == "on";
         Smoothing = respondSpeed;
-        CpuCurve = new FanCurve(CPUTempFanMap); GpuCurve = new FanCurve(GPUTempFanMap);
+        CpuFan1Curve = new FanCurve(CPUTempFanMap); CpuFan2Curve = new FanCurve(CPUTempFan2Map);
+        GpuFan1Curve = new FanCurve(GPUTempFanMap); GpuFan2Curve = new FanCurve(GPUTempFan2Map);
         FixedRpm = fanControl.EndsWith(" RPM", StringComparison.Ordinal) ? Number(fanControl, " RPM", 0, 20000) : null;
       }
     }
@@ -127,6 +128,10 @@ namespace OmenSuperHub {
       if (tppValueLabel != null) tppValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, tppTrackBar.Value + " W");
       if (textSizeLabel != null) textSizeLabel.Text = string.Format(Strings.CurrentSliderValueTemp, textSizeTrackBar.Value * 4);
     }
+    static string FormatFanSpeed(FanDecision decision) {
+      if (!decision.HasSpeed) return null;
+      return (decision.Fan1Rpm.Value / 100) + "," + (decision.Fan2Rpm.Value / 100) + "," + (Is3FanNb ? "1" : "0") + ",0";
+    }
     static void EvaluateFan(bool debounce = false) {
       if (_isExiting) return;
       lock (fanDecisionGate) {
@@ -137,8 +142,9 @@ namespace OmenSuperHub {
         Reading cpu = matching && target.Cpu ? data.CpuTemperature : null;
         Reading gpu = matching && target.Gpu ? data.GpuTemperature : null;
         FanDecision decision = fanController.Evaluate(target.FanGeneration, target.FanMode, target.FixedRpm,
-          target.Cleaning, cpu, data.CpuSmoothed, gpu, data.GpuSmoothed, target.CpuCurve, target.GpuCurve);
-        string speed = decision.Rpm.HasValue ? (decision.Rpm.Value / 100) + "," + (decision.Rpm.Value / 100) + "," + (Is3FanNb ? "1" : "0") + ",0" : null;
+          target.Cleaning, cpu, data.CpuSmoothed, gpu, data.GpuSmoothed,
+          target.CpuFan1Curve, target.CpuFan2Curve, target.GpuFan1Curve, target.GpuFan2Curve);
+        string speed = FormatFanSpeed(decision);
         if (decision.Mode == "clean") speed = platformSettings.CleanCreekCpuFanSpeed + "," + platformSettings.CleanCreekGpuFanSpeed + "," + (Is3FanNb ? "1" : "0") + ",1";
         hardwareDispatcher.SubmitFan(target.FanGeneration, data.Version, decision.Mode, speed, debounce, target.Revision);
         if (matching && target.Fan && data.FanRpm.Fresh(controlClock.Milliseconds))
@@ -158,8 +164,9 @@ namespace OmenSuperHub {
         bool matches = data.MonitorVersion == target.MonitorVersion;
         var final = fanController.Evaluate(target.FanGeneration, target.FanMode, target.FixedRpm, null,
           matches && target.Cpu ? data.CpuTemperature : null, data.CpuSmoothed,
-          matches && target.Gpu ? data.GpuTemperature : null, data.GpuSmoothed, target.CpuCurve, target.GpuCurve);
-        string speed = final.Rpm.HasValue ? final.Rpm.Value / 100 + "," + final.Rpm.Value / 100 + "," + (Is3FanNb ? "1" : "0") + ",0" : null;
+          matches && target.Gpu ? data.GpuTemperature : null, data.GpuSmoothed,
+          target.CpuFan1Curve, target.CpuFan2Curve, target.GpuFan1Curve, target.GpuFan2Curve);
+        string speed = FormatFanSpeed(final);
         return hardwareDispatcher.StopAsync(final.Mode, speed);
       }
     }
